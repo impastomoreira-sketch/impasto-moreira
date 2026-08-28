@@ -68,12 +68,12 @@ app.use("/api/admin/users", auth, requireRole("admin"), userRoutes);
 app.use("/api/admin/settings", auth, requireRole("admin"), settingsRoutes);
 
 // Placeholders documentados para a próxima etapa (PIX, WhatsApp, impressão, tempo real)
-app.use("/api/integrations/*", (req, res) => {
+app.use("/api/integrations", (req, res) => {
   res.status(501).json({ error: "Integração ainda não configurada nesta etapa. Veja README.md." });
 });
 
-app.get("/admin*", (req, res) => res.sendFile(path.join(__dirname, "../public/admin/index.html")));
-app.get("*", (req, res, next) => {
+app.use("/admin", (req, res) => res.sendFile(path.join(__dirname, "../public/admin/index.html")));
+app.use((req, res, next) => {
   if (req.path.startsWith("/api")) return next();
   res.sendFile(path.join(__dirname, "../public/cardapio/index.html"));
 });
