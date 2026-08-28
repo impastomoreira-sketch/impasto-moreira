@@ -1,0 +1,28 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: impasto_moreira
+      POSTGRES_USER: impasto
+      POSTGRES_PASSWORD: impasto
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./database.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://impasto:impasto@db:5432/impasto_moreira
+      JWT_SECRET: troque-esta-chave-em-producao
+      PORT: 3000
+      PGSSL: "false"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+
+volumes:
+  db_data:
