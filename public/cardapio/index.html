@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Impasto Moreira — Cardápio</title>
+<meta name="theme-color" content="#1b100b">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/assets/icon-192.png">
+<link rel="apple-touch-icon" href="/assets/icon-192.png">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<header class="brand-header">
+  <div class="brand-lockup">
+    <img src="/assets/logo.png" alt="Impasto Moreira">
+  </div>
+  <nav class="brand-nav">
+    <button id="installBtn" style="display:none" onclick="installApp()">📲 Instalar app</button>
+    <a href="/admin">Área administrativa</a>
+  </nav>
+</header>
+
+<div class="hero">
+  <div class="tag">pizza contemporânea</div>
+</div>
+
+<main id="app"></main>
+
+<button class="cart-fab" id="cartFab" onclick="openCart()">🛒 Carrinho <span id="cartCount">0</span></button>
+
+<div class="overlay" id="overlay" onclick="closeCart()"></div>
+<div class="drawer" id="drawer"></div>
+
+<script>
+const money = n => Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+let menu = [];
+let settings = { restaurantName: "Impasto Moreira", whatsappNumber: "" };
+let cart = JSON.parse(localStorage.im_cart || "[]");
+let step = "carrinho"; // carrinho -> entrega -> confirmação
+let orderType = "Delivery";
+let deliveryFee = 0;
+let lastOrder = null;
+
+function saveCart(){ localStorage.im_cart = JSON.stringify(cart); renderCartCount(); }
+function renderCartCount(){ document.querySelector('#cartCount').textContent = cart.reduce((s,i)=>s+i.quantity,0); }
+
+async function loadMenu(){
+  menu = await fetch('/api/public/menu').then(r=>r.json());
+  const categories = [...new Set(menu.map(p=>p.category))];
+  const app = document.querySelector('#app');
+  if(!categories.length){
+    app.innerHTML = '<div class="card">Cardápio ainda não configurado. Volte em breve.</div>';
+    return;
+  }
+  app.innerHTML = categories.map(cat => `
+    <h2 class="category-title">${cat}</h2>
+    <div class="grid">
+      ${menu.filter(p=>p.category===cat).map(p => `
+        <div class="card product-card">
+          <h3>${p.name}</h3>
+          <p>${p.description||''}</p>
+          <div class="price">${money(p.price)}</div>
+          <div class="qty-row">
+            <button onclick="changeQty(${p.id},-1)">−</button>
+            <span id="qty-${p.id}">${qtyOf(p.id)}</span>
+            <button onclick="changeQty(${p.id},1)">+</button>
+            <button class="btn add-btn" onclick="addToCart(${p.id})">Adicionar</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
+let pendingQty = {};
+function qtyOf(id){ return pendingQty[id] || 1; }
+function changeQty(id,delta){
+  pendingQty[id] = Math.max(1,(pendingQty[id]||1)+delta);
+  document.querySelector('#qty-'+id).textContent = pendingQty[id];
+}
+function addToCart(id){
+  const p = menu.find(x=>x.id===id);
+  const qty = pendingQty[id]||1;
+  const existing = cart.find(i=>i.productId===id);
+  if(existing) existing.quantity += qty;
+  else cart.push({productId:id,name:p.name,price:Number(p.price),quantity:qty});
+  pendingQty[id]=1;
+  document.querySelector('#qty-'+id).textContent = 1;
+  saveCart();
+  openCart();
+}
+function removeFromCart(id){ cart = cart.filter(i=>i.productId!==id); saveCart(); renderCart(); }
+function cartSubtotal(){ return cart.reduce((s,i)=>s+i.price*i.quantity,0); }
+
+function openCart(){
+  step = cart.length ? "carrinho" : "carrinho";
+  renderCart();
+  document.querySelector('#overlay').classList.add('open');
+  document.querySelector('#drawer').classList.add('open');
+}
+function closeCart(){
+  document.querySelector('#overlay').classList.remove('open');
+  document.querySelector('#drawer').classList.remove('open');
+}
+
+async function renderCart(){
+  const d = document.querySelector('#drawer');
+  if(step==="carrinho"){
+    d.innerHTML = `
+      <h2 style="color:var(--gold-light)">Seu carrinho</h2>
+      ${cart.length ? cart.map(i=>`
+        <div class="cart-line">
+          <div class="name">${i.quantity}× ${i.name}</div>
+          <div>${money(i.price*i.quantity)}</div>
+          <button class="btn secondary" style="padding:6px 10px" onclick="removeFromCart(${i.productId})">✕</button>
+        </div>
+      `).join('') : '<p class="muted">Seu carrinho está vazio.</p>'}
+      <div class="cart-total"><span>Subtotal</span><span>${money(cartSubtotal())}</span></div>
+      <button class="btn block" ${cart.length?'':'disabled'} onclick="step='entrega';renderCart()">Continuar</button>
+      <button class="btn secondary block" style="margin-top:8px" onclick="closeCart()">Continuar comprando</button>
+    `;
+  } else if(step==="entrega"){
+    d.innerHTML = `
+      <h2 style="color:var(--gold-light)">Entrega e pagamento</h2>
+      <div class="step-tabs">
+        <button id="tabDelivery" class="active" onclick="setOrderType('Delivery')">Entrega</button>
+        <button id="tabPickup" onclick="setOrderType('Retirada')">Retirada</button>
+      </div>
+      <label>Nome</label><input id="fCustomer">
+      <label>Telefone / WhatsApp</label><input id="fPhone" placeholder="(00) 00000-0000">
+      <div id="addressFields">
+        <label>Rua</label><input id="fStreet">
+        <label>Número</label><input id="fNumber">
+        <label>Complemento</label><input id="fComplement">
+        <label>Bairro</label><input id="fNeighborhood" onchange="lookupFee()">
+        <label>Cidade</label><input id="fCity">
+        <p class="muted" id="feeInfo">Taxa de entrega calculada pelo bairro.</p>
+      </div>
+      <label>Forma de pagamento</label>
+      <select id="fPayment">
+        <option>PIX</option><option>Cartão na entrega</option><option>Dinheiro</option>
+      </select>
+      <label>Observações</label><textarea id="fNotes" rows="2" placeholder="Ex: sem cebola, troco para R$100..."></textarea>
+      <div class="cart-total"><span>Subtotal</span><span>${money(cartSubtotal())}</span></div>
+      <div class="cart-total" id="feeLine"><span>Taxa de entrega</span><span>${money(deliveryFee)}</span></div>
+      <div class="cart-total" style="border-top:1px solid var(--border);padding-top:10px"><span>Total</span><span id="totalLine">${money(cartSubtotal()+deliveryFee)}</span></div>
+      <button class="btn block" onclick="submitOrder()">Confirmar pedido</button>
+      ${settings.whatsappNumber ? `<button class="btn block" style="margin-top:8px;background:#25D366;color:#0b2e17" onclick="submitOrder(true)">📲 Confirmar e enviar pelo WhatsApp</button>` : ''}
+      <button class="btn secondary block" style="margin-top:8px" onclick="step='carrinho';renderCart()">Voltar</button>
+    `;
+  } else if(step==="confirmacao"){
+    d.innerHTML = `
+      <h2 style="color:var(--gold-light)">Pedido enviado! 🎉</h2>
+      <p>Seu pedido <b>#${lastOrder.orderId}</b> foi recebido pela cozinha.</p>
+      <p class="muted">Total: ${money(lastOrder.total)}</p>
+      <p class="muted">Guarde o número do pedido para acompanhar o status.</p>
+      <button class="btn block" onclick="finishOrder()">Fazer novo pedido</button>
+    `;
+  }
+}
+
+function setOrderType(type){
+  orderType = type;
+  document.querySelector('#tabDelivery').classList.toggle('active', type==='Delivery');
+  document.querySelector('#tabPickup').classList.toggle('active', type==='Retirada');
+  document.querySelector('#addressFields').style.display = type==='Delivery' ? 'block':'none';
+  if(type==='Retirada'){ deliveryFee = 0; updateTotals(); }
+  else lookupFee();
+}
+
+async function lookupFee(){
+  const n = document.querySelector('#fNeighborhood').value;
+  if(!n) return;
+  const r = await fetch('/api/public/delivery-fee?neighborhood='+encodeURIComponent(n)).then(r=>r.json());
+  deliveryFee = r.fee;
+  updateTotals();
+}
+function updateTotals(){
+  document.querySelector('#feeLine').innerHTML = `<span>Taxa de entrega</span><span>${money(deliveryFee)}</span>`;
+  document.querySelector('#totalLine').textContent = money(cartSubtotal()+deliveryFee);
+}
+
+async function submitOrder(viaWhatsApp){
+  const customer = document.querySelector('#fCustomer').value.trim();
+  const phone = document.querySelector('#fPhone').value.trim();
+  if(!customer || !phone) return alert('Preencha nome e telefone.');
+  const address = orderType==='Delivery' ? {
+    street: document.querySelector('#fStreet').value,
+    number: document.querySelector('#fNumber').value,
+    complement: document.querySelector('#fComplement').value,
+    neighborhood: document.querySelector('#fNeighborhood').value,
+    city: document.querySelector('#fCity').value
+  } : null;
+  const paymentMethod = document.querySelector('#fPayment').value;
+  const notes = document.querySelector('#fNotes').value;
+  const payload = {
+    customer, phone, orderType, paymentMethod, notes, address,
+    items: cart.map(i=>({productId:i.productId,quantity:i.quantity}))
+  };
+  const r = await fetch('/api/public/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const x = await r.json();
+  if(!r.ok) return alert(x.error || 'Não foi possível enviar o pedido.');
+  lastOrder = x;
+
+  if(viaWhatsApp && settings.whatsappNumber){
+    const lines = [
+      `*Novo pedido #${x.orderId} — ${settings.restaurantName}*`,
+      ...cart.map(i=>`${i.quantity}x ${i.name} — ${money(i.price*i.quantity)}`),
+      orderType==='Delivery' ? `Entrega: ${address.street}, ${address.number} - ${address.neighborhood}` : 'Retirada no local',
+      `Pagamento: ${paymentMethod}`,
+      notes ? `Obs: ${notes}` : null,
+      `*Total: ${money(x.total)}*`,
+      `Cliente: ${customer} (${phone})`
+    ].filter(Boolean).join('\n');
+    window.open(`https://wa.me/${settings.whatsappNumber}?text=${encodeURIComponent(lines)}`, '_blank');
+  }
+
+  step = "confirmacao";
+  renderCart();
+}
+function finishOrder(){
+  cart = [];
+  saveCart();
+  closeCart();
+}
+
+async function loadSettings(){
+  try{ settings = await fetch('/api/public/settings').then(r=>r.json()); }catch{}
+}
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(()=>{}));
+}
+
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  document.querySelector('#installBtn').style.display = 'inline-flex';
+});
+function installApp(){
+  if(!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  deferredInstallPrompt = null;
+  document.querySelector('#installBtn').style.display = 'none';
+}
+
+renderCartCount();
+loadSettings();
+loadMenu();
+</script>
+</body>
+</html>

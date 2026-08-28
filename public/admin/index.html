@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Impasto Moreira — Painel</title>
+<link rel="icon" href="/assets/logo.png">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="admin">
+<header class="brand-header">
+  <div class="brand-lockup">
+    <img src="/assets/logo.png" alt="Impasto Moreira">
+    <div>
+      <div class="name">Painel administrativo</div>
+      <span class="role-badge" id="roleBadge" style="display:none"></span>
+    </div>
+  </div>
+  <nav class="brand-nav" id="nav"></nav>
+</header>
+<main id="app"></main>
+<script>
+const API = '/api';
+const money = n => Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+let token = localStorage.im_token || "";
+let user = JSON.parse(localStorage.im_user || "null");
+let currentView = "dashboard";
+
+async function api(url, opt={}){
+  opt.headers = {...(opt.headers||{}), Authorization: 'Bearer '+token, ...(opt.body?{'Content-Type':'application/json'}:{})};
+  const r = await fetch(API+url, opt);
+  if(r.status===401){ logout(); throw new Error('sessão expirada'); }
+  const data = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(data.error || 'Erro na requisição');
+  return data;
+}
+
+function logout(){ localStorage.removeItem('im_token'); localStorage.removeItem('im_user'); token=""; user=null; renderLogin(); }
+
+function renderLogin(){
+  document.querySelector('#nav').innerHTML = '';
+  document.querySelector('#roleBadge').style.display = 'none';
+  document.querySelector('#app').innerHTML = `
+    <div class="card" style="max-width:400px;margin:60px auto">
+      <h2>Entrar</h2>
+      <label>E-mail</label><input id="email">
+      <label>Senha</label><input id="pass" type="password">
+      <button class="btn block" onclick="doLogin()">Entrar</button>
+      <p class="muted" id="loginError"></p>
+    </div>`;
+}
+
+async function doLogin(){
+  const email = document.querySelector('#email').value.trim();
+  const password = document.querySelector('#pass').value;
+  try{
+    const r = await fetch(API+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+    const x = await r.json();
+    if(!r.ok) throw new Error(x.error);
+    token = x.token; user = x.user;
+    localStorage.im_token = token; localStorage.im_user = JSON.stringify(user);
+    boot();
+  }catch(e){ document.querySelector('#loginError').textContent = e.message; }
+}
+
+const NAV_BY_ROLE = {
+  admin: [['dashboard','Dashboard'],['orders','Pedidos'],['kitchen','Cozinha'],['products','Cardápio'],['stock','Estoque'],['finance','Financeiro'],['reports','Relatórios'],['users','Usuários'],['settings','Configurações']],
+  atendimento: [['orders','Pedidos'],['kitchen','Cozinha']],
+  cozinha: [['kitchen','Cozinha']]
+};
+
+function renderNav(){
+  const items = NAV_BY_ROLE[user.role] || [];
+  document.querySelector('#nav').innerHTML = items.map(([id,label]) =>
+    `<button id="nav-${id}" onclick="go('${id}')">${label}</button>`
+  ).join('') + `<button onclick="logout()">Sair</button>`;
+  document.querySelector('#roleBadge').style.display = 'inline-block';
+  document.querySelector('#roleBadge').textContent = user.role;
+}
+
+function go(view){
+  currentView = view;
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
+  const btn = document.querySelector('#nav-'+view);
+  if(btn) btn.classList.add('active');
+  const renderers = { dashboard:renderDashboard, orders:renderOrders, kitchen:renderKitchen, products:renderProducts, stock:renderStock, finance:renderFinance, reports:renderReports, users:renderUsers, settings:renderSettings };
+  (renderers[view]||renderDashboard)();
+}
+
+function boot(){
+  if(!token || !user){ renderLogin(); return; }
+  renderNav();
+  const items = NAV_BY_ROLE[user.role] || [];
+  go(items[0] ? items[0][0] : 'dashboard');
+}
+
+/* ---------- Dashboard ---------- */
+async function renderDashboard(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const [summary, lowStock, topProducts] = await Promise.all([
+    api('/admin/finance/summary'),
+    api('/admin/reports/low-stock'),
+    api('/admin/reports/top-products')
+  ]);
+  app.innerHTML = `
+    <div class="grid">
+      <div class="card"><span class="muted">Receita total</span><div class="kpi">${money(summary.revenue)}</div></div>
+      <div class="card"><span class="muted">Despesas</span><div class="kpi">${money(summary.expenses)}</div></div>
+      <div class="card"><span class="muted">Saldo</span><div class="kpi">${money(summary.balance)}</div></div>
+      <div class="card"><span class="muted">Ingredientes em estoque baixo</span><div class="kpi">${lowStock.length}</div></div>
+    </div>
+    <h2 class="category-title" style="color:var(--gold)">Mais vendidos</h2>
+    <table><thead><tr><th>Produto</th><th>Qtd.</th><th>Receita</th></tr></thead>
+    <tbody>${topProducts.slice(0,8).map(p=>`<tr><td>${p.product_name}</td><td>${p.qty}</td><td>${money(p.revenue)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sem dados ainda</td></tr>'}</tbody></table>
+    ${lowStock.length ? `<h2 class="category-title" style="color:var(--gold)">⚠️ Estoque baixo</h2>
+    <div class="grid">${lowStock.map(i=>`<div class="card"><b>${i.name}</b><p class="muted">${i.stock_qty} ${i.unit} (mínimo: ${i.min_qty})</p></div>`).join('')}</div>` : ''}
+  `;
+}
+
+/* ---------- Pedidos ---------- */
+async function renderOrders(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const orders = await api('/admin/orders');
+  app.innerHTML = `
+    <h1>Pedidos</h1>
+    <div class="grid">
+      ${orders.map(o => `
+        <div class="card">
+          <b>#${o.id} — ${o.customer||'Cliente'}</b>
+          <p class="muted">${o.phone||''}</p>
+          <p>${o.order_type}${o.neighborhood ? ' • '+o.neighborhood : ''} • ${o.payment_method}</p>
+          <p><span class="badge" data-status="${o.status}">${o.status}</span></p>
+          <b>${money(o.total)}</b>
+          <div style="margin-top:10px">
+            <select onchange="updateStatus(${o.id},this.value)">
+              ${['Recebido','Preparando','Pronto','Saiu para entrega','Entregue','Cancelado'].map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      `).join('') || '<p class="muted">Nenhum pedido ainda.</p>'}
+    </div>
+  `;
+}
+
+async function updateStatus(id, status){
+  try{ await api(`/admin/orders/${id}/status`,{method:'PATCH',body:JSON.stringify({status})}); go(currentView); }
+  catch(e){ alert(e.message); }
+}
+
+/* ---------- Cozinha ---------- */
+async function renderKitchen(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const orders = (await api('/admin/orders')).filter(o=>['Recebido','Preparando','Pronto'].includes(o.status));
+  const withItems = await Promise.all(orders.map(async o => ({...o, items: await api(`/admin/orders/${o.id}/items`)})));
+  app.innerHTML = `
+    <h1>Painel da cozinha</h1>
+    <div class="kitchen-grid">
+      ${withItems.map(o => `
+        <div class="card kitchen-card">
+          <b>#${o.id} — ${o.customer||'Cliente'}</b>
+          <span class="badge" data-status="${o.status}">${o.status}</span>
+          <div class="items">${o.items.map(i=>`${i.quantity}× ${i.product_name}`).join('<br>')}</div>
+          ${o.notes ? `<p class="muted">Obs: ${o.notes}</p>` : ''}
+          <div class="actions">
+            ${o.status==='Recebido' ? `<button class="btn block" onclick="updateStatus(${o.id},'Preparando')">Iniciar preparo</button>` : ''}
+            ${o.status==='Preparando' ? `<button class="btn block" onclick="updateStatus(${o.id},'Pronto')">Marcar pronto</button>` : ''}
+            ${o.status==='Pronto' ? `<span class="muted">Aguardando retirada/entrega</span>` : ''}
+          </div>
+        </div>
+      `).join('') || '<p class="muted">Nenhum pedido em andamento.</p>'}
+    </div>
+  `;
+}
+
+/* ---------- Cardápio (admin) ---------- */
+async function renderProducts(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const [products, categories] = await Promise.all([api('/admin/products'), api('/admin/products/categories')]);
+  app.innerHTML = `
+    <h1>Cardápio</h1>
+    <div class="card" style="max-width:480px">
+      <h3>Novo produto</h3>
+      <label>Nome</label><input id="pName">
+      <label>Categoria</label>
+      <select id="pCategory">${categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
+      <label>Descrição</label><input id="pDesc">
+      <label>Preço</label><input id="pPrice" type="number" step="0.01">
+      <button class="btn block" onclick="createProduct()">Adicionar</button>
+    </div>
+    <div class="grid" style="margin-top:16px">
+      ${products.map(p => `
+        <div class="card">
+          <h3>${p.name}</h3>
+          <p class="muted">${p.category_name}</p>
+          <b>${money(p.price)}</b>
+          <div style="margin-top:8px">
+            <label>Preço</label>
+            <input value="${p.price}" onchange="updateProductPrice(${p.id},this.value)">
+            <label><input type="checkbox" ${p.active?'checked':''} onchange="toggleProductActive(${p.id},this.checked)" style="width:auto;display:inline-block"> Ativo no cardápio</label>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+async function createProduct(){
+  try{
+    await api('/admin/products',{method:'POST',body:JSON.stringify({
+      name: document.querySelector('#pName').value,
+      categoryId: Number(document.querySelector('#pCategory').value),
+      description: document.querySelector('#pDesc').value,
+      price: Number(document.querySelector('#pPrice').value)
+    })});
+    go('products');
+  }catch(e){ alert(e.message); }
+}
+async function updateProductPrice(id, price){
+  try{ await api(`/admin/products/${id}`,{method:'PATCH',body:JSON.stringify({price:Number(price)})}); }catch(e){ alert(e.message); }
+}
+async function toggleProductActive(id, active){
+  try{ await api(`/admin/products/${id}`,{method:'PATCH',body:JSON.stringify({active})}); }catch(e){ alert(e.message); }
+}
+
+/* ---------- Estoque ---------- */
+async function renderStock(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const ingredients = await api('/admin/stock');
+  app.innerHTML = `
+    <h1>Estoque</h1>
+    <div class="card" style="max-width:480px">
+      <h3>Novo ingrediente</h3>
+      <label>Nome</label><input id="iName">
+      <label>Unidade</label><input id="iUnit" placeholder="kg, un, l...">
+      <label>Estoque inicial</label><input id="iQty" type="number" step="0.001">
+      <label>Estoque mínimo</label><input id="iMin" type="number" step="0.001">
+      <label>Custo unitário</label><input id="iCost" type="number" step="0.01">
+      <button class="btn block" onclick="createIngredient()">Adicionar</button>
+    </div>
+    <table style="margin-top:16px">
+      <thead><tr><th>Ingrediente</th><th>Estoque</th><th>Mínimo</th><th>Custo</th><th>Movimentar</th></tr></thead>
+      <tbody>
+        ${ingredients.map(i => `
+          <tr ${i.stock_qty<=i.min_qty?'style="background:#fdecea"':''}>
+            <td>${i.name}</td><td>${i.stock_qty} ${i.unit}</td><td>${i.min_qty}</td><td>${money(i.unit_cost)}</td>
+            <td>
+              <select id="mtype-${i.id}" style="width:auto;display:inline-block;margin:0 6px">
+                <option>Entrada</option><option>Saída</option><option>Ajuste</option>
+              </select>
+              <input id="mqty-${i.id}" type="number" step="0.001" style="width:80px;display:inline-block;margin:0 6px">
+              <button class="btn secondary" onclick="registerMovement(${i.id})">OK</button>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+async function createIngredient(){
+  try{
+    await api('/admin/stock',{method:'POST',body:JSON.stringify({
+      name: document.querySelector('#iName').value,
+      unit: document.querySelector('#iUnit').value,
+      stockQty: Number(document.querySelector('#iQty').value||0),
+      minQty: Number(document.querySelector('#iMin').value||0),
+      unitCost: Number(document.querySelector('#iCost').value||0)
+    })});
+    go('stock');
+  }catch(e){ alert(e.message); }
+}
+async function registerMovement(id){
+  const movementType = document.querySelector('#mtype-'+id).value;
+  const quantity = Number(document.querySelector('#mqty-'+id).value||0);
+  if(!quantity) return;
+  try{ await api('/admin/stock/movements',{method:'POST',body:JSON.stringify({ingredientId:id,movementType,quantity})}); go('stock'); }
+  catch(e){ alert(e.message); }
+}
+
+/* ---------- Financeiro ---------- */
+async function renderFinance(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const [entries, summary] = await Promise.all([api('/admin/finance'), api('/admin/finance/summary')]);
+  app.innerHTML = `
+    <h1>Financeiro</h1>
+    <div class="grid">
+      <div class="card"><span class="muted">Receita</span><div class="kpi">${money(summary.revenue)}</div></div>
+      <div class="card"><span class="muted">Despesas</span><div class="kpi">${money(summary.expenses)}</div></div>
+      <div class="card"><span class="muted">Saldo</span><div class="kpi">${money(summary.balance)}</div></div>
+    </div>
+    <div class="card" style="max-width:480px;margin-top:16px">
+      <h3>Novo lançamento manual</h3>
+      <label>Tipo</label>
+      <select id="fType"><option>Despesa</option><option>Receita</option></select>
+      <label>Descrição</label><input id="fDesc">
+      <label>Valor</label><input id="fAmount" type="number" step="0.01">
+      <button class="btn block" onclick="createFinanceEntry()">Lançar</button>
+    </div>
+    <table style="margin-top:16px">
+      <thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Valor</th></tr></thead>
+      <tbody>${entries.map(e=>`<tr><td>${new Date(e.created_at).toLocaleDateString('pt-BR')}</td><td>${e.entry_type}</td><td>${e.description}</td><td>${money(e.amount)}</td></tr>`).join('')}</tbody>
+    </table>
+  `;
+}
+async function createFinanceEntry(){
+  try{
+    await api('/admin/finance',{method:'POST',body:JSON.stringify({
+      entryType: document.querySelector('#fType').value,
+      description: document.querySelector('#fDesc').value,
+      amount: Number(document.querySelector('#fAmount').value)
+    })});
+    go('finance');
+  }catch(e){ alert(e.message); }
+}
+
+/* ---------- Relatórios ---------- */
+async function renderReports(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const [byDay, topProducts, byCategory] = await Promise.all([
+    api('/admin/reports/sales-by-day'), api('/admin/reports/top-products'), api('/admin/reports/by-category')
+  ]);
+  app.innerHTML = `
+    <h1>Relatórios</h1>
+    <h2 class="category-title" style="color:var(--gold)">Vendas por dia</h2>
+    <table><thead><tr><th>Dia</th><th>Pedidos</th><th>Total</th></tr></thead>
+    <tbody>${byDay.map(d=>`<tr><td>${new Date(d.day).toLocaleDateString('pt-BR')}</td><td>${d.orders}</td><td>${money(d.total)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sem dados</td></tr>'}</tbody></table>
+    <h2 class="category-title" style="color:var(--gold)">Produtos mais vendidos</h2>
+    <table><thead><tr><th>Produto</th><th>Qtd.</th><th>Receita</th></tr></thead>
+    <tbody>${topProducts.map(p=>`<tr><td>${p.product_name}</td><td>${p.qty}</td><td>${money(p.revenue)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sem dados</td></tr>'}</tbody></table>
+    <h2 class="category-title" style="color:var(--gold)">Receita por categoria</h2>
+    <table><thead><tr><th>Categoria</th><th>Receita</th></tr></thead>
+    <tbody>${byCategory.map(c=>`<tr><td>${c.category}</td><td>${money(c.revenue)}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">Sem dados</td></tr>'}</tbody></table>
+  `;
+}
+
+/* ---------- Usuários ---------- */
+async function renderUsers(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const users = await api('/admin/users');
+  app.innerHTML = `
+    <h1>Usuários</h1>
+    <div class="card" style="max-width:480px">
+      <h3>Novo usuário</h3>
+      <label>Nome</label><input id="uName">
+      <label>E-mail</label><input id="uEmail">
+      <label>Senha</label><input id="uPass" type="password">
+      <label>Papel</label>
+      <select id="uRole"><option value="atendimento">Atendimento</option><option value="cozinha">Cozinha</option><option value="admin">Administrador</option></select>
+      <button class="btn block" onclick="createUser()">Criar</button>
+    </div>
+    <table style="margin-top:16px">
+      <thead><tr><th>Nome</th><th>E-mail</th><th>Papel</th><th>Ativo</th></tr></thead>
+      <tbody>${users.map(u=>`
+        <tr>
+          <td>${u.name}</td><td>${u.email}</td><td>${u.role}</td>
+          <td><input type="checkbox" ${u.active?'checked':''} onchange="toggleUserActive(${u.id},this.checked)" style="width:auto"></td>
+        </tr>
+      `).join('')}</tbody>
+    </table>
+  `;
+}
+async function createUser(){
+  try{
+    await api('/admin/users',{method:'POST',body:JSON.stringify({
+      name: document.querySelector('#uName').value,
+      email: document.querySelector('#uEmail').value,
+      password: document.querySelector('#uPass').value,
+      role: document.querySelector('#uRole').value
+    })});
+    go('users');
+  }catch(e){ alert(e.message); }
+}
+async function toggleUserActive(id, active){
+  try{ await api(`/admin/users/${id}`,{method:'PATCH',body:JSON.stringify({active})}); }catch(e){ alert(e.message); }
+}
+
+/* ---------- Configurações ---------- */
+async function renderSettings(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const s = await api('/admin/settings');
+  const menuUrl = window.location.origin + '/';
+  const qrSrc = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encodeURIComponent(menuUrl);
+  app.innerHTML = `
+    <h1>Configurações</h1>
+    <div class="grid">
+      <div class="card">
+        <h3>Dados do restaurante</h3>
+        <label>Nome do restaurante</label>
+        <input id="sName" value="${s.restaurantName||''}">
+        <label>WhatsApp para pedidos (com DDI e DDD, só números — ex: 5511999998888)</label>
+        <input id="sWhats" value="${s.whatsappNumber||''}">
+        <p class="muted">Preenchido, o cardápio público mostra o botão "Confirmar e enviar pelo WhatsApp" no checkout.</p>
+        <button class="btn block" onclick="saveSettings()">Salvar</button>
+      </div>
+      <div class="card" style="text-align:center">
+        <h3>Divulgue seu cardápio</h3>
+        <img src="${qrSrc}" alt="QR Code do cardápio" style="border-radius:12px;margin:8px 0">
+        <p class="muted" style="word-break:break-all">${menuUrl}</p>
+        <button class="btn secondary block" onclick="navigator.clipboard.writeText('${menuUrl}');this.textContent='Link copiado!'">Copiar link</button>
+      </div>
+    </div>
+  `;
+}
+async function saveSettings(){
+  try{
+    await api('/admin/settings',{method:'PATCH',body:JSON.stringify({
+      restaurantName: document.querySelector('#sName').value,
+      whatsappNumber: document.querySelector('#sWhats').value.replace(/\D/g,'')
+    })});
+    go('settings');
+  }catch(e){ alert(e.message); }
+}
+
+boot();
+</script>
+</body>
+</html>

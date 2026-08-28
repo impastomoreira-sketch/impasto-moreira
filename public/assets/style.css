@@ -1,0 +1,106 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Poppins:wght@300;400;500;600&display=swap');
+
+:root{
+  --bg:#1b100b;
+  --bg-elevated:#251610;
+  --card:#2c1b13;
+  --gold:#c9862e;
+  --gold-light:#e3b876;
+  --text:#f3e9dc;
+  --muted:#b39c86;
+  --border:#4a3626;
+  --admin-bg:#f6f1ea;
+  --admin-card:#ffffff;
+  --admin-border:#e6dccf;
+  --admin-ink:#2c1b13;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Poppins',Arial,sans-serif;background:var(--bg);color:var(--text)}
+h1,h2,h3,.brand-title{font-family:'Playfair Display',serif}
+
+/* ---------- Cabeçalho de marca ---------- */
+.brand-header{background:var(--bg-elevated);border-bottom:1px solid var(--border);padding:18px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:space-between}
+.brand-lockup{display:flex;align-items:center;gap:12px}
+.brand-lockup img{height:44px;width:auto}
+.brand-lockup .name{font-family:'Playfair Display',serif;font-weight:700;font-size:1.25rem;color:var(--gold-light);letter-spacing:.03em}
+.brand-lockup .tag{font-size:.68rem;letter-spacing:.28em;text-transform:uppercase;color:var(--muted)}
+
+nav.brand-nav{display:flex;gap:8px;flex-wrap:wrap}
+nav.brand-nav a,nav.brand-nav button{color:var(--gold-light);background:transparent;border:1px solid var(--border);padding:9px 14px;border-radius:8px;text-decoration:none;font-size:.85rem;cursor:pointer;font-family:'Poppins',sans-serif}
+nav.brand-nav a.active,nav.brand-nav button.active{background:var(--gold);border-color:var(--gold);color:#241608;font-weight:600}
+
+/* ---------- Layout ---------- */
+main{max-width:1100px;margin:24px auto;padding:0 16px 80px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.card{background:var(--card);padding:18px;border-radius:16px;border:1px solid var(--border)}
+.muted{color:var(--muted);font-size:.9rem}
+
+.btn{border:0;padding:12px 18px;border-radius:10px;background:var(--gold);color:#241608;font-weight:600;cursor:pointer;font-size:1rem;font-family:'Poppins',sans-serif}
+.btn:hover{background:var(--gold-light)}
+.btn.secondary{background:transparent;color:var(--gold-light);border:1px solid var(--gold)}
+.btn.danger{background:#8a3a2c;color:#fff}
+.btn.block{width:100%}
+
+input,select,textarea{width:100%;padding:11px;margin:6px 0 12px;border:1px solid var(--border);border-radius:8px;box-sizing:border-box;font-size:1rem;background:var(--bg-elevated);color:var(--text);font-family:'Poppins',sans-serif}
+label{font-size:.85rem;font-weight:600;color:var(--muted)}
+
+.badge{display:inline-block;padding:4px 11px;border-radius:20px;font-size:.72rem;font-weight:700;background:#3a2a1e;color:var(--gold-light)}
+.badge[data-status="Recebido"]{background:#2c3a4a;color:#a9c6e6}
+.badge[data-status="Preparando"]{background:#4a3a12;color:#f0c766}
+.badge[data-status="Pronto"]{background:#1f4a2a;color:#8fe0a0}
+.badge[data-status="Saiu para entrega"]{background:#123f4a;color:#7fd4e6}
+.badge[data-status="Entregue"]{background:#1a4a1a;color:#8fe08f}
+.badge[data-status="Cancelado"]{background:#4a1a1a;color:#e08f8f}
+
+/* ---------- Cardápio público ---------- */
+.hero{text-align:center;padding:30px 16px 10px}
+.hero img{height:90px;margin-bottom:8px}
+.hero h1{color:var(--gold-light);font-size:2rem;margin:6px 0 2px;letter-spacing:.02em}
+.hero .tag{font-size:.72rem;letter-spacing:.3em;text-transform:uppercase;color:var(--muted)}
+
+.category-title{color:var(--gold-light);font-size:1.2rem;margin:26px 0 10px;border-bottom:1px solid var(--border);padding-bottom:8px}
+.product-card{display:flex;flex-direction:column;gap:6px}
+.product-card h3{margin:0;font-size:1.05rem;color:var(--text)}
+.product-card p{margin:0;font-size:.85rem;color:var(--muted)}
+.product-card .price{color:var(--gold-light);font-weight:700;font-size:1.05rem;margin-top:4px}
+.qty-row{display:flex;align-items:center;gap:10px;margin-top:8px}
+.qty-row button{width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--gold-light);font-size:1.1rem;cursor:pointer}
+.qty-row .add-btn{flex:1}
+
+.cart-fab{position:fixed;bottom:18px;right:18px;background:var(--gold);color:#241608;border-radius:50px;padding:14px 22px;font-weight:700;box-shadow:0 8px 22px rgba(0,0,0,.4);cursor:pointer;z-index:50;font-family:'Poppins',sans-serif;border:0}
+.drawer{position:fixed;top:0;right:0;height:100%;width:min(420px,100%);background:var(--bg-elevated);box-shadow:-10px 0 24px rgba(0,0,0,.5);transform:translateX(100%);transition:.25s;z-index:60;padding:22px;overflow:auto;border-left:1px solid var(--border)}
+.drawer.open{transform:translateX(0)}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:.25s;z-index:55}
+.overlay.open{opacity:1;pointer-events:auto}
+.cart-line{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:10px}
+.cart-line .name{font-size:.9rem}
+.cart-total{display:flex;justify-content:space-between;font-size:1.1rem;font-weight:700;color:var(--gold-light);margin:14px 0}
+.step-tabs{display:flex;gap:8px;margin-bottom:14px}
+.step-tabs button{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--muted);cursor:pointer}
+.step-tabs button.active{background:var(--gold);color:#241608;border-color:var(--gold);font-weight:600}
+
+/* ---------- Painel administrativo (fundo claro, acentos da marca) ---------- */
+.admin{background:var(--admin-bg);color:var(--admin-ink);min-height:100vh}
+.admin main{max-width:1200px}
+.admin .card{background:var(--admin-card);border-color:var(--admin-border);color:var(--admin-ink)}
+.admin input,.admin select,.admin textarea{background:#fff;color:var(--admin-ink);border-color:var(--admin-border)}
+.admin table{width:100%;border-collapse:collapse}
+.admin th,.admin td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--admin-border);font-size:.88rem}
+.admin th{color:#8a715a;text-transform:uppercase;font-size:.7rem;letter-spacing:.06em}
+.admin .muted{color:#8a7a6a}
+.admin label{color:#8a715a}
+.admin .kpi{font-size:1.8rem;font-weight:700;color:var(--gold);font-family:'Playfair Display',serif}
+.admin .role-badge{display:inline-block;padding:3px 10px;border-radius:6px;background:var(--gold);color:#241608;font-size:.72rem;font-weight:700}
+
+.kitchen-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.kitchen-card{border-left:5px solid var(--gold)}
+.kitchen-card .items{font-size:.85rem;color:#5a4a3a;margin:8px 0}
+.kitchen-card .actions{display:flex;gap:8px;margin-top:10px}
+.kitchen-card .actions button{flex:1;padding:12px 6px;font-size:.85rem}
+
+@media(max-width:640px){
+  .brand-header{padding:12px}
+  main{padding:0 10px 80px}
+  nav.brand-nav{width:100%}
+  .drawer{width:100%}
+}
