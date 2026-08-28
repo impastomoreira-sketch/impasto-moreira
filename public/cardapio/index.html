@@ -10,12 +10,13 @@
 <link rel="apple-touch-icon" href="/assets/icon-192.png">
 <link rel="stylesheet" href="/assets/style.css">
 </head>
-<body>
+<body class="cardapio-bg">
 <header class="brand-header">
   <div class="brand-lockup">
     <img src="/assets/logo.png" alt="Impasto Moreira">
   </div>
   <nav class="brand-nav">
+    <a id="instagramLink" href="#" target="_blank" rel="noopener" style="display:none">📷 Instagram</a>
     <button id="installBtn" style="display:none" onclick="installApp()">📲 Instalar app</button>
     <a href="/admin">Área administrativa</a>
   </nav>
@@ -46,7 +47,10 @@ function saveCart(){ localStorage.im_cart = JSON.stringify(cart); renderCartCoun
 function renderCartCount(){ document.querySelector('#cartCount').textContent = cart.reduce((s,i)=>s+i.quantity,0); }
 
 async function loadMenu(){
-  menu = await fetch('/api/public/menu').then(r=>r.json());
+  const raw = await fetch('/api/public/menu').then(r=>r.json());
+  // O banco devolve IDs como texto (BIGSERIAL); convertendo para número aqui
+  // evita falhas de comparação (ex: "1" !== 1) que impediam adicionar ao carrinho.
+  menu = raw.map(p => ({ ...p, id: Number(p.id), price: Number(p.price), promoPrice: p.promo_price!=null ? Number(p.promo_price) : null, promoActive: !!p.promo_active }));
   const categories = [...new Set(menu.map(p=>p.category))];
   const app = document.querySelector('#app');
   if(!categories.length){
@@ -56,11 +60,17 @@ async function loadMenu(){
   app.innerHTML = categories.map(cat => `
     <h2 class="category-title">${cat}</h2>
     <div class="grid">
-      ${menu.filter(p=>p.category===cat).map(p => `
+      ${menu.filter(p=>p.category===cat).map(p => {
+        const onPromo = p.promoActive && p.promoPrice != null && p.promoPrice < p.price;
+        return `
         <div class="card product-card">
+          ${p.image_url ? `<img class="product-img" src="${p.image_url}" alt="${p.name}">` : ''}
+          ${onPromo ? `<span class="promo-tag">Promoção</span>` : ''}
           <h3>${p.name}</h3>
           <p>${p.description||''}</p>
-          <div class="price">${money(p.price)}</div>
+          <div class="price">
+            ${onPromo ? `<span class="price-old">${money(p.price)}</span> ${money(p.promoPrice)}` : money(p.price)}
+          </div>
           <div class="qty-row">
             <button onclick="changeQty(${p.id},-1)">−</button>
             <span id="qty-${p.id}">${qtyOf(p.id)}</span>
@@ -68,7 +78,7 @@ async function loadMenu(){
             <button class="btn add-btn" onclick="addToCart(${p.id})">Adicionar</button>
           </div>
         </div>
-      `).join('')}
+      `}).join('')}
     </div>
   `).join('');
 }
@@ -82,9 +92,10 @@ function changeQty(id,delta){
 function addToCart(id){
   const p = menu.find(x=>x.id===id);
   const qty = pendingQty[id]||1;
+  const effectivePrice = (p.promoActive && p.promoPrice!=null && p.promoPrice<p.price) ? p.promoPrice : p.price;
   const existing = cart.find(i=>i.productId===id);
   if(existing) existing.quantity += qty;
-  else cart.push({productId:id,name:p.name,price:Number(p.price),quantity:qty});
+  else cart.push({productId:id,name:p.name,price:effectivePrice,quantity:qty});
   pendingQty[id]=1;
   document.querySelector('#qty-'+id).textContent = 1;
   saveCart();
@@ -226,7 +237,14 @@ function finishOrder(){
 }
 
 async function loadSettings(){
-  try{ settings = await fetch('/api/public/settings').then(r=>r.json()); }catch{}
+  try{
+    settings = await fetch('/api/public/settings').then(r=>r.json());
+    if(settings.instagramUrl){
+      const link = document.querySelector('#instagramLink');
+      link.href = settings.instagramUrl;
+      link.style.display = 'inline-flex';
+    }
+  }catch{}
 }
 
 if('serviceWorker' in navigator){

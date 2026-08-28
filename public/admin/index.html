@@ -189,18 +189,29 @@ async function renderProducts(){
       <select id="pCategory">${categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
       <label>Descrição</label><input id="pDesc">
       <label>Preço</label><input id="pPrice" type="number" step="0.01">
+      <label>URL da foto do produto</label>
+      <input id="pImage" placeholder="https://...">
+      <p class="muted" style="margin-top:-8px">Cole o link de uma imagem publicada (Google Drive, Imgur, seu Instagram etc). Upload direto de arquivo ainda não está disponível.</p>
       <button class="btn block" onclick="createProduct()">Adicionar</button>
     </div>
     <div class="grid" style="margin-top:16px">
       ${products.map(p => `
         <div class="card">
+          ${p.image_url ? `<img src="${p.image_url}" style="width:100%;height:130px;object-fit:cover;border-radius:10px;margin-bottom:8px">` : ''}
           <h3>${p.name}</h3>
           <p class="muted">${p.category_name}</p>
           <b>${money(p.price)}</b>
           <div style="margin-top:8px">
             <label>Preço</label>
-            <input value="${p.price}" onchange="updateProductPrice(${p.id},this.value)">
-            <label><input type="checkbox" ${p.active?'checked':''} onchange="toggleProductActive(${p.id},this.checked)" style="width:auto;display:inline-block"> Ativo no cardápio</label>
+            <input value="${p.price}" onchange="updateProduct(${p.id},{price:Number(this.value)})">
+            <label>URL da foto</label>
+            <input value="${p.image_url||''}" placeholder="https://..." onchange="updateProduct(${p.id},{imageUrl:this.value})">
+            <label><input type="checkbox" ${p.active?'checked':''} onchange="updateProduct(${p.id},{active:this.checked})" style="width:auto;display:inline-block"> Ativo no cardápio</label>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--admin-border)">
+              <label><input type="checkbox" ${p.promo_active?'checked':''} onchange="updateProduct(${p.id},{promoActive:this.checked})" style="width:auto;display:inline-block"> Em promoção</label>
+              <label>Preço promocional</label>
+              <input value="${p.promo_price||''}" placeholder="ex: 44.90" onchange="updateProduct(${p.id},{promoPrice:Number(this.value)})">
+            </div>
           </div>
         </div>
       `).join('')}
@@ -213,16 +224,15 @@ async function createProduct(){
       name: document.querySelector('#pName').value,
       categoryId: Number(document.querySelector('#pCategory').value),
       description: document.querySelector('#pDesc').value,
-      price: Number(document.querySelector('#pPrice').value)
+      price: Number(document.querySelector('#pPrice').value),
+      imageUrl: document.querySelector('#pImage').value
     })});
     go('products');
   }catch(e){ alert(e.message); }
 }
-async function updateProductPrice(id, price){
-  try{ await api(`/admin/products/${id}`,{method:'PATCH',body:JSON.stringify({price:Number(price)})}); }catch(e){ alert(e.message); }
-}
-async function toggleProductActive(id, active){
-  try{ await api(`/admin/products/${id}`,{method:'PATCH',body:JSON.stringify({active})}); }catch(e){ alert(e.message); }
+async function updateProduct(id, patch){
+  try{ await api(`/admin/products/${id}`,{method:'PATCH',body:JSON.stringify(patch)}); go('products'); }
+  catch(e){ alert(e.message); }
 }
 
 /* ---------- Estoque ---------- */
@@ -397,6 +407,8 @@ async function renderSettings(){
         <label>WhatsApp para pedidos (com DDI e DDD, só números — ex: 5511999998888)</label>
         <input id="sWhats" value="${s.whatsappNumber||''}">
         <p class="muted">Preenchido, o cardápio público mostra o botão "Confirmar e enviar pelo WhatsApp" no checkout.</p>
+        <label>Instagram (link completo)</label>
+        <input id="sInstagram" value="${s.instagramUrl||''}" placeholder="https://instagram.com/impastomoreira">
         <button class="btn block" onclick="saveSettings()">Salvar</button>
       </div>
       <div class="card" style="text-align:center">
@@ -412,7 +424,8 @@ async function saveSettings(){
   try{
     await api('/admin/settings',{method:'PATCH',body:JSON.stringify({
       restaurantName: document.querySelector('#sName').value,
-      whatsappNumber: document.querySelector('#sWhats').value.replace(/\D/g,'')
+      whatsappNumber: document.querySelector('#sWhats').value.replace(/\D/g,''),
+      instagramUrl: document.querySelector('#sInstagram').value
     })});
     go('settings');
   }catch(e){ alert(e.message); }

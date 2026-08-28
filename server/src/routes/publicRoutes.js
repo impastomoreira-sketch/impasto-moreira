@@ -10,14 +10,15 @@ router.get("/settings", async (_, res) => {
   const s = await readSettings();
   res.json({
     restaurantName: s.restaurant_name || "Impasto Moreira",
-    whatsappNumber: s.whatsapp_number || ""
+    whatsappNumber: s.whatsapp_number || "",
+    instagramUrl: s.instagram_url || ""
   });
 });
 
 router.get("/menu", async (_, res) => {
   if (!pool) return res.json([]);
   const { rows } = await pool.query(`
-    select p.id,p.name,p.description,p.price,p.image_url,c.name category
+    select p.id,p.name,p.description,p.price,p.image_url,p.promo_price,p.promo_active,c.name category
     from products p join categories c on c.id=p.category_id
     where p.active=true order by c.sort_order,p.name`);
   res.json(rows);
@@ -81,14 +82,18 @@ router.post("/orders", async (req, res) => {
     const priced = [];
     for (const item of items) {
       const p = await client.query(
-        "select id,name,price from products where id=$1 and active=true",
+        "select id,name,price,promo_price,promo_active from products where id=$1 and active=true",
         [item.productId]
       );
       if (!p.rows[0]) throw new Error("Um dos produtos do carrinho não está mais disponível");
+      const row = p.rows[0];
+      const effectivePrice = row.promo_active && row.promo_price != null && Number(row.promo_price) < Number(row.price)
+        ? Number(row.promo_price)
+        : Number(row.price);
       const quantity = Math.max(1, Number(item.quantity || 1));
-      const lineTotal = Number(p.rows[0].price) * quantity;
+      const lineTotal = effectivePrice * quantity;
       subtotal += lineTotal;
-      priced.push({ productId: p.rows[0].id, name: p.rows[0].name, quantity, unitPrice: p.rows[0].price, lineTotal });
+      priced.push({ productId: row.id, name: row.name, quantity, unitPrice: effectivePrice, lineTotal });
     }
 
     const deliveryFee = orderType === "Delivery" ? await getDeliveryFee(address.neighborhood) : 0;

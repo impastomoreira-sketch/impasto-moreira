@@ -3,11 +3,12 @@ import { pool } from "../db.js";
 
 const router = Router();
 
-export const SETTINGS_KEYS = ["restaurant_name", "whatsapp_number", "menu_public_url"];
+export const SETTINGS_KEYS = ["restaurant_name", "whatsapp_number", "menu_public_url", "instagram_url"];
 const FIELD_TO_KEY = {
   restaurantName: "restaurant_name",
   whatsappNumber: "whatsapp_number",
-  menuPublicUrl: "menu_public_url"
+  menuPublicUrl: "menu_public_url",
+  instagramUrl: "instagram_url"
 };
 
 export async function readSettings() {
@@ -16,14 +17,18 @@ export async function readSettings() {
   return Object.fromEntries(rows.map(r => [r.key, r.value]));
 }
 
-// GET/PATCH aqui são sempre montados atrás de auth + requireRole("admin") no server.js
-router.get("/", async (_, res) => {
-  const s = await readSettings();
-  res.json({
+function toPublicShape(s) {
+  return {
     restaurantName: s.restaurant_name || "",
     whatsappNumber: s.whatsapp_number || "",
-    menuPublicUrl: s.menu_public_url || ""
-  });
+    menuPublicUrl: s.menu_public_url || "",
+    instagramUrl: s.instagram_url || ""
+  };
+}
+
+// GET/PATCH aqui são sempre montados atrás de auth + requireRole("admin") no server.js
+router.get("/", async (_, res) => {
+  res.json(toPublicShape(await readSettings()));
 });
 
 router.patch("/", async (req, res) => {
@@ -42,12 +47,7 @@ router.patch("/", async (req, res) => {
       }
     }
     await client.query("commit");
-    const s = await readSettings();
-    res.json({
-      restaurantName: s.restaurant_name || "",
-      whatsappNumber: s.whatsapp_number || "",
-      menuPublicUrl: s.menu_public_url || ""
-    });
+    res.json(toPublicShape(await readSettings()));
   } catch (e) {
     await client.query("rollback");
     res.status(400).json({ error: e.message });

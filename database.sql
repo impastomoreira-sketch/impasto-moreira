@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS products (
   description TEXT,
   price NUMERIC(10,2) NOT NULL,
   image_url TEXT,
+  promo_price NUMERIC(10,2),
+  promo_active BOOLEAN DEFAULT FALSE,
   active BOOLEAN DEFAULT TRUE
 );
 
@@ -192,7 +194,8 @@ ON CONFLICT (neighborhood) DO NOTHING;
 INSERT INTO settings(key,value) VALUES
 ('restaurant_name','Impasto Moreira'),
 ('whatsapp_number',''),
-('menu_public_url','')
+('menu_public_url',''),
+('instagram_url','')
 ON CONFLICT (key) DO NOTHING;
 
 -- Ajuste os bairros e taxas de "delivery_zones" para a região real da pizzaria

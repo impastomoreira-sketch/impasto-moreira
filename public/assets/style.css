@@ -18,6 +18,17 @@
 body{margin:0;font-family:'Poppins',Arial,sans-serif;background:var(--bg);color:var(--text)}
 h1,h2,h3,.brand-title{font-family:'Playfair Display',serif}
 
+/* Fundo discreto com foto de produto, fixo atrás do conteúdo do cardápio público */
+body.cardapio-bg{
+  background-image:
+    linear-gradient(180deg, rgba(27,16,11,.94) 0%, rgba(27,16,11,.97) 40%, var(--bg) 100%),
+    url('/assets/hero-bg.jpg');
+  background-size: cover;
+  background-position: top center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
 /* ---------- Cabeçalho de marca ---------- */
 .brand-header{background:var(--bg-elevated);border-bottom:1px solid var(--border);padding:18px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:space-between}
 .brand-lockup{display:flex;align-items:center;gap:12px}
@@ -59,10 +70,13 @@ label{font-size:.85rem;font-weight:600;color:var(--muted)}
 .hero .tag{font-size:.72rem;letter-spacing:.3em;text-transform:uppercase;color:var(--muted)}
 
 .category-title{color:var(--gold-light);font-size:1.2rem;margin:26px 0 10px;border-bottom:1px solid var(--border);padding-bottom:8px}
-.product-card{display:flex;flex-direction:column;gap:6px}
+.product-card{display:flex;flex-direction:column;gap:6px;position:relative}
+.product-card .product-img{width:100%;height:140px;object-fit:cover;border-radius:10px;margin-bottom:6px}
 .product-card h3{margin:0;font-size:1.05rem;color:var(--text)}
 .product-card p{margin:0;font-size:.85rem;color:var(--muted)}
 .product-card .price{color:var(--gold-light);font-weight:700;font-size:1.05rem;margin-top:4px}
+.product-card .price-old{color:var(--muted);font-weight:400;text-decoration:line-through;font-size:.85rem;margin-right:6px}
+.promo-tag{position:absolute;top:10px;right:10px;background:#8a3a2c;color:#fff;font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.03em;text-transform:uppercase}
 .qty-row{display:flex;align-items:center;gap:10px;margin-top:8px}
 .qty-row button{width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg-elevated);color:var(--gold-light);font-size:1.1rem;cursor:pointer}
 .qty-row .add-btn{flex:1}
