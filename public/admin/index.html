@@ -19,6 +19,7 @@
   <nav class="brand-nav" id="nav"></nav>
 </header>
 <main id="app"></main>
+<div id="toastContainer" style="position:fixed;top:16px;right:16px;z-index:500;display:flex;flex-direction:column;gap:8px;max-width:320px"></div>
 <script>
 const API = '/api';
 const money = n => Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
@@ -35,7 +36,7 @@ async function api(url, opt={}){
   return data;
 }
 
-function logout(){ localStorage.removeItem('im_token'); localStorage.removeItem('im_user'); token=""; user=null; renderLogin(); }
+function logout(){ stopOrderWatcher(); localStorage.removeItem('im_token'); localStorage.removeItem('im_user'); token=""; user=null; renderLogin(); }
 
 function renderLogin(){
   document.querySelector('#nav').innerHTML = '';
@@ -92,6 +93,74 @@ function boot(){
   renderNav();
   const items = NAV_BY_ROLE[user.role] || [];
   go(items[0] ? items[0][0] : 'dashboard');
+  startOrderWatcher();
+}
+
+/* ---------- Alerta de pedido novo (som + aviso na tela + notificação do navegador) ---------- */
+let lastOrderId = null;
+let orderWatcherInterval = null;
+
+function startOrderWatcher(){
+  if(!['admin','atendimento','cozinha'].includes(user.role)) return;
+  if('Notification' in window && Notification.permission === 'default'){
+    Notification.requestPermission();
+  }
+  checkNewOrders();
+  if(orderWatcherInterval) clearInterval(orderWatcherInterval);
+  orderWatcherInterval = setInterval(checkNewOrders, 12000);
+}
+function stopOrderWatcher(){
+  if(orderWatcherInterval) clearInterval(orderWatcherInterval);
+  orderWatcherInterval = null;
+  lastOrderId = null;
+}
+async function checkNewOrders(){
+  try{
+    const orders = await api('/admin/orders');
+    if(!orders.length) return;
+    const maxId = Math.max(...orders.map(o=>o.id));
+    if(lastOrderId === null){ lastOrderId = maxId; return; } // primeira checagem só marca o ponto de partida
+    if(maxId > lastOrderId){
+      orders.filter(o=>o.id > lastOrderId).sort((a,b)=>a.id-b.id).forEach(announceNewOrder);
+      lastOrderId = maxId;
+      if(currentView==='orders' || currentView==='kitchen' || currentView==='dashboard') go(currentView);
+    }
+  }catch(e){ /* falha de rede silenciosa, tenta de novo na próxima checagem */ }
+}
+function announceNewOrder(o){
+  playBeep();
+  showToast(`🔔 Novo pedido #${o.id} — ${o.customer||'Cliente'} — ${money(o.total)}`);
+  if('Notification' in window && Notification.permission === 'granted'){
+    new Notification('Novo pedido recebido!', {
+      body: `#${o.id} — ${o.customer||'Cliente'} — ${money(o.total)}`,
+      icon: '/assets/icon-192.png'
+    });
+  }
+}
+function playBeep(){
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    [880, 1108].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.value = 0.18;
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + i*0.16);
+      osc.stop(ctx.currentTime + i*0.16 + 0.15);
+    });
+    setTimeout(()=>ctx.close(), 500);
+  }catch(e){}
+}
+function showToast(msg){
+  const c = document.querySelector('#toastContainer');
+  const el = document.createElement('div');
+  el.textContent = msg;
+  el.style.cssText = 'background:var(--gold);color:#241608;padding:12px 16px;border-radius:10px;font-weight:600;font-size:.9rem;box-shadow:0 8px 20px rgba(0,0,0,.35);cursor:pointer';
+  el.onclick = () => el.remove();
+  c.appendChild(el);
+  setTimeout(()=>el.remove(), 8000);
 }
 
 /* ---------- Dashboard ---------- */
@@ -176,7 +245,10 @@ async function renderKitchen(){
 }
 
 /* ---------- Cardápio (admin) ---------- */
+let newProductImageUrl = null;
+
 async function renderProducts(){
+  newProductImageUrl = null;
   const app = document.querySelector('#app');
   app.innerHTML = '<p class="muted">Carregando...</p>';
   const [products, categories] = await Promise.all([api('/admin/products'), api('/admin/products/categories')]);
@@ -189,9 +261,9 @@ async function renderProducts(){
       <select id="pCategory">${categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select>
       <label>Descrição</label><input id="pDesc">
       <label>Preço</label><input id="pPrice" type="number" step="0.01">
-      <label>URL da foto do produto</label>
-      <input id="pImage" placeholder="https://...">
-      <p class="muted" style="margin-top:-8px">Cole o link de uma imagem publicada (Google Drive, Imgur, seu Instagram etc). Upload direto de arquivo ainda não está disponível.</p>
+      <label>Foto do produto</label>
+      <input type="file" accept="image/*" onchange="handleNewProductImage(this)">
+      <p class="muted" id="pImageStatus" style="margin-top:4px"></p>
       <button class="btn block" onclick="createProduct()">Adicionar</button>
     </div>
     <div class="grid" style="margin-top:16px">
@@ -204,8 +276,9 @@ async function renderProducts(){
           <div style="margin-top:8px">
             <label>Preço</label>
             <input value="${p.price}" onchange="updateProduct(${p.id},{price:Number(this.value)})">
-            <label>URL da foto</label>
-            <input value="${p.image_url||''}" placeholder="https://..." onchange="updateProduct(${p.id},{imageUrl:this.value})">
+            <label>Foto do produto</label>
+            <input type="file" accept="image/*" onchange="handleExistingProductImage(${p.id},this)">
+            <p class="muted" id="pImageStatus-${p.id}" style="margin-top:-8px"></p>
             <label><input type="checkbox" ${p.active?'checked':''} onchange="updateProduct(${p.id},{active:this.checked})" style="width:auto;display:inline-block"> Ativo no cardápio</label>
             <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--admin-border)">
               <label><input type="checkbox" ${p.promo_active?'checked':''} onchange="updateProduct(${p.id},{promoActive:this.checked})" style="width:auto;display:inline-block"> Em promoção</label>
@@ -218,6 +291,48 @@ async function renderProducts(){
     </div>
   `;
 }
+
+const CLOUDINARY_CLOUD_NAME = 'wfj6nhgu';
+const CLOUDINARY_UPLOAD_PRESET = 'impasto-moreira';
+
+async function uploadToCloudinary(file){
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  const r = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, { method:'POST', body: formData });
+  const data = await r.json();
+  if(!r.ok) throw new Error(data.error?.message || 'Falha no upload da imagem');
+  return data.secure_url;
+}
+
+async function handleNewProductImage(input){
+  const file = input.files[0];
+  if(!file) return;
+  const status = document.querySelector('#pImageStatus');
+  status.textContent = 'Enviando foto...';
+  try{
+    newProductImageUrl = await uploadToCloudinary(file);
+    status.textContent = '✅ Foto pronta — clique em Adicionar para salvar o produto';
+  }catch(e){
+    status.textContent = '❌ '+e.message;
+    newProductImageUrl = null;
+  }
+}
+
+async function handleExistingProductImage(id, input){
+  const file = input.files[0];
+  if(!file) return;
+  const status = document.querySelector('#pImageStatus-'+id);
+  status.textContent = 'Enviando foto...';
+  try{
+    const url = await uploadToCloudinary(file);
+    await api(`/admin/products/${id}`,{method:'PATCH',body:JSON.stringify({imageUrl:url})});
+    go('products');
+  }catch(e){
+    status.textContent = '❌ '+e.message;
+  }
+}
+
 async function createProduct(){
   try{
     await api('/admin/products',{method:'POST',body:JSON.stringify({
@@ -225,7 +340,7 @@ async function createProduct(){
       categoryId: Number(document.querySelector('#pCategory').value),
       description: document.querySelector('#pDesc').value,
       price: Number(document.querySelector('#pPrice').value),
-      imageUrl: document.querySelector('#pImage').value
+      imageUrl: newProductImageUrl
     })});
     go('products');
   }catch(e){ alert(e.message); }
