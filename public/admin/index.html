@@ -446,11 +446,22 @@ async function createFinanceEntry(){
 async function renderReports(){
   const app = document.querySelector('#app');
   app.innerHTML = '<p class="muted">Carregando...</p>';
-  const [byDay, topProducts, byCategory] = await Promise.all([
-    api('/admin/reports/sales-by-day'), api('/admin/reports/top-products'), api('/admin/reports/by-category')
+  const [byDay, topProducts, byCategory, cmv] = await Promise.all([
+    api('/admin/reports/sales-by-day'), api('/admin/reports/top-products'), api('/admin/reports/by-category'), api('/admin/reports/cmv')
   ]);
   app.innerHTML = `
     <h1>Relatórios</h1>
+    <h2 class="category-title" style="color:var(--gold)">CMV — Custo da Mercadoria Vendida</h2>
+    <div class="grid">
+      <div class="card"><span class="muted">Custo total (ingredientes vendidos)</span><div class="kpi">${money(cmv.overall.totalCost)}</div></div>
+      <div class="card"><span class="muted">Receita das vendas</span><div class="kpi">${money(cmv.overall.totalRevenue)}</div></div>
+      <div class="card"><span class="muted">CMV realizado</span><div class="kpi">${cmv.overall.cmvPercent}%</div></div>
+    </div>
+    <p class="muted" style="margin-top:10px">CMV realizado é calculado com base nos pedidos já feitos. A tabela abaixo mostra o CMV teórico de cada produto, pela ficha técnica e preço atuais — cadastre ingredientes e fichas técnicas em Estoque para todos os produtos para o número ficar completo.</p>
+    <table style="margin-top:10px">
+      <thead><tr><th>Produto</th><th>Preço</th><th>Custo (ficha técnica)</th><th>CMV</th><th>Margem</th></tr></thead>
+      <tbody>${cmv.products.map(p=>`<tr><td>${p.name}</td><td>${money(p.price)}</td><td>${money(p.cost)}</td><td>${p.cmvPercent}%</td><td>${p.marginPercent}%</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Sem produtos ativos</td></tr>'}</tbody>
+    </table>
     <h2 class="category-title" style="color:var(--gold)">Vendas por dia</h2>
     <table><thead><tr><th>Dia</th><th>Pedidos</th><th>Total</th></tr></thead>
     <tbody>${byDay.map(d=>`<tr><td>${new Date(d.day).toLocaleDateString('pt-BR')}</td><td>${d.orders}</td><td>${money(d.total)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Sem dados</td></tr>'}</tbody></table>
