@@ -6,7 +6,7 @@ const router = Router();
 router.get("/sales-by-day", async (_, res) => {
   if (!pool) return res.json([]);
   const { rows } = await pool.query(`
-    select date_trunc('day',created_at)::date day, sum(total) total, count(*) orders
+    select date_trunc('day',created_at)::date as day, sum(total) as total, count(*) as orders
     from orders where status<>'Cancelado'
     group by 1 order by 1 desc limit 30`);
   res.json(rows);
