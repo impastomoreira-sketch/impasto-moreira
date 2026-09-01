@@ -17,10 +17,14 @@
   </div>
   <nav class="brand-nav">
     <a id="instagramLink" href="#" target="_blank" rel="noopener" style="display:none">📷 Instagram</a>
+    <button onclick="openMyOrders()">📦 Meus pedidos</button>
     <button id="installBtn" style="display:none" onclick="installApp()">📲 Instalar app</button>
     <a href="/admin">Área administrativa</a>
   </nav>
 </header>
+
+<div class="overlay" id="ordersOverlay" onclick="closeMyOrders()"></div>
+<div class="drawer" id="ordersDrawer"></div>
 
 <div class="hero">
   <div class="tag">pizza contemporânea</div>
@@ -165,7 +169,7 @@ async function renderCart(){
       <h2 style="color:var(--gold-light)">Pedido enviado! 🎉</h2>
       <p>Seu pedido <b>#${lastOrder.orderId}</b> foi recebido pela cozinha.</p>
       <p class="muted">Total: ${money(lastOrder.total)}</p>
-      <p class="muted">Guarde o número do pedido para acompanhar o status.</p>
+      <p class="muted">Acompanhe o status a qualquer momento no botão "📦 Meus pedidos", no topo da página.</p>
       <button class="btn block" onclick="finishOrder()">Fazer novo pedido</button>
     `;
   }
@@ -213,6 +217,7 @@ async function submitOrder(viaWhatsApp){
   const x = await r.json();
   if(!r.ok) return alert(x.error || 'Não foi possível enviar o pedido.');
   lastOrder = x;
+  saveMyOrder(x.orderId);
 
   if(viaWhatsApp && settings.whatsappNumber){
     const lines = [
@@ -234,6 +239,54 @@ function finishOrder(){
   cart = [];
   saveCart();
   closeCart();
+}
+
+/* ---------- Meus pedidos (acompanhamento de status ao vivo pro cliente) ---------- */
+let myOrdersPollInterval = null;
+
+function getMyOrders(){
+  try{ return JSON.parse(localStorage.im_orders || '[]'); }catch{ return []; }
+}
+function saveMyOrder(id){
+  let list = getMyOrders().filter(o=>o.id!==id);
+  list.unshift({ id, date: new Date().toISOString() });
+  localStorage.im_orders = JSON.stringify(list.slice(0,10));
+}
+
+function openMyOrders(){
+  document.querySelector('#ordersOverlay').classList.add('open');
+  document.querySelector('#ordersDrawer').classList.add('open');
+  renderMyOrders();
+  if(myOrdersPollInterval) clearInterval(myOrdersPollInterval);
+  myOrdersPollInterval = setInterval(renderMyOrders, 10000); // atualiza status sozinho a cada 10s
+}
+function closeMyOrders(){
+  document.querySelector('#ordersOverlay').classList.remove('open');
+  document.querySelector('#ordersDrawer').classList.remove('open');
+  if(myOrdersPollInterval){ clearInterval(myOrdersPollInterval); myOrdersPollInterval = null; }
+}
+
+async function renderMyOrders(){
+  const list = getMyOrders();
+  const d = document.querySelector('#ordersDrawer');
+  if(!list.length){
+    d.innerHTML = `<h2 style="color:var(--gold-light)">Meus pedidos</h2><p class="muted">Você ainda não fez nenhum pedido neste navegador/celular.</p>`;
+    return;
+  }
+  const results = await Promise.all(list.map(async o => {
+    try{ return await fetch('/api/public/orders/'+o.id+'/status').then(r=>r.json()); }
+    catch{ return { id:o.id, status:null }; }
+  }));
+  d.innerHTML = `<h2 style="color:var(--gold-light)">Meus pedidos</h2>` +
+    results.map(o => `
+      <div class="cart-line" style="flex-direction:column;align-items:flex-start;gap:6px">
+        <div style="display:flex;justify-content:space-between;width:100%;align-items:center">
+          <b>Pedido #${o.id}</b>
+          ${o.status ? `<span class="badge" data-status="${o.status}">${o.status}</span>` : '<span class="muted">não encontrado</span>'}
+        </div>
+        ${o.total ? `<span class="muted">${money(o.total)} • ${o.order_type||''}</span>` : ''}
+      </div>
+    `).join('');
 }
 
 async function loadSettings(){
