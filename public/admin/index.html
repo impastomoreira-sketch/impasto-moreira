@@ -251,7 +251,9 @@ async function renderProducts(){
   newProductImageUrl = null;
   const app = document.querySelector('#app');
   app.innerHTML = '<p class="muted">Carregando...</p>';
-  const [products, categories] = await Promise.all([api('/admin/products'), api('/admin/products/categories')]);
+  const [products, categories, ingredients] = await Promise.all([api('/admin/products'), api('/admin/products/categories'), api('/admin/stock')]);
+  const recipesByProduct = {};
+  await Promise.all(products.map(async p => { recipesByProduct[p.id] = await api('/admin/stock/recipes/'+p.id); }));
   app.innerHTML = `
     <h1>Cardápio</h1>
     <div class="card" style="max-width:480px">
@@ -284,6 +286,22 @@ async function renderProducts(){
               <label><input type="checkbox" ${p.promo_active?'checked':''} onchange="updateProduct(${p.id},{promoActive:this.checked})" style="width:auto;display:inline-block"> Em promoção</label>
               <label>Preço promocional</label>
               <input value="${p.promo_price||''}" placeholder="ex: 44.90" onchange="updateProduct(${p.id},{promoPrice:Number(this.value)})">
+            </div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--admin-border)">
+              <b style="font-size:.85rem">Ficha técnica (usada para calcular o CMV)</b>
+              ${(recipesByProduct[p.id]||[]).map(r=>`
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:.85rem;margin-top:6px">
+                  <span>${r.ingredient_name} — ${r.quantity} ${r.unit}</span>
+                  <button class="btn secondary" style="padding:2px 8px;font-size:.75rem" onclick="removeRecipeItem(${r.id},${p.id})">✕</button>
+                </div>
+              `).join('') || '<p class="muted" style="font-size:.8rem;margin-top:6px">Nenhum ingrediente vinculado ainda</p>'}
+              <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+                <select id="recIng-${p.id}" style="flex:1;width:auto;margin:0">
+                  ${ingredients.map(i=>`<option value="${i.id}">${i.name} (${i.unit})</option>`).join('')}
+                </select>
+                <input id="recQty-${p.id}" type="number" step="0.001" placeholder="qtd" style="width:80px;margin:0">
+                <button class="btn secondary" style="padding:8px 12px" onclick="addRecipeItem(${p.id})">+</button>
+              </div>
             </div>
           </div>
         </div>
@@ -347,6 +365,18 @@ async function createProduct(){
 }
 async function updateProduct(id, patch){
   try{ await api(`/admin/products/${id}`,{method:'PATCH',body:JSON.stringify(patch)}); go('products'); }
+  catch(e){ alert(e.message); }
+}
+
+async function addRecipeItem(productId){
+  const ingredientId = Number(document.querySelector('#recIng-'+productId).value);
+  const quantity = Number(document.querySelector('#recQty-'+productId).value);
+  if(!quantity) return alert('Informe a quantidade usada nesse produto');
+  try{ await api('/admin/stock/recipes',{method:'POST',body:JSON.stringify({productId,ingredientId,quantity})}); go('products'); }
+  catch(e){ alert(e.message); }
+}
+async function removeRecipeItem(recipeId, productId){
+  try{ await api('/admin/stock/recipes/'+recipeId,{method:'DELETE'}); go('products'); }
   catch(e){ alert(e.message); }
 }
 
