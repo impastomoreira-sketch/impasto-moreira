@@ -69,4 +69,10 @@ router.post("/recipes", async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
+router.delete("/recipes/:id", async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
+  await pool.query("delete from recipes where id=$1", [req.params.id]);
+  res.json({ deleted: true });
+});
+
 export default router;
