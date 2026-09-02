@@ -20,6 +20,29 @@ router.post("/", async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
+router.patch("/:id", async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
+  const { name, unit, minQty, unitCost } = req.body || {};
+  const { rows } = await pool.query(
+    `update ingredients set
+       name=coalesce($1,name), unit=coalesce($2,unit),
+       min_qty=coalesce($3,min_qty), unit_cost=coalesce($4,unit_cost)
+     where id=$5 returning *`,
+    [name, unit, minQty, unitCost, req.params.id]
+  );
+  res.json(rows[0] || {});
+});
+
+router.delete("/:id", async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
+  try {
+    await pool.query("delete from ingredients where id=$1", [req.params.id]);
+    res.json({ deleted: true });
+  } catch (e) {
+    res.status(400).json({ error: "Não é possível excluir: esse ingrediente está vinculado a uma ficha técnica ou tem movimentações. Remova esses vínculos primeiro." });
+  }
+});
+
 router.post("/movements", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
   const { ingredientId, movementType, quantity, unitCost, reason } = req.body || {};
