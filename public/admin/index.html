@@ -65,7 +65,7 @@ async function doLogin(){
 }
 
 const NAV_BY_ROLE = {
-  admin: [['dashboard','Dashboard'],['orders','Pedidos'],['kitchen','Cozinha'],['products','Cardápio'],['stock','Estoque'],['finance','Financeiro'],['reports','Relatórios'],['users','Usuários'],['settings','Configurações']],
+  admin: [['dashboard','Dashboard'],['orders','Pedidos'],['kitchen','Cozinha'],['products','Cardápio'],['stock','Estoque'],['delivery','Entrega'],['finance','Financeiro'],['reports','Relatórios'],['users','Usuários'],['settings','Configurações']],
   atendimento: [['orders','Pedidos'],['kitchen','Cozinha']],
   cozinha: [['kitchen','Cozinha']]
 };
@@ -84,7 +84,7 @@ function go(view){
   document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
   const btn = document.querySelector('#nav-'+view);
   if(btn) btn.classList.add('active');
-  const renderers = { dashboard:renderDashboard, orders:renderOrders, kitchen:renderKitchen, products:renderProducts, stock:renderStock, finance:renderFinance, reports:renderReports, users:renderUsers, settings:renderSettings };
+  const renderers = { dashboard:renderDashboard, orders:renderOrders, kitchen:renderKitchen, products:renderProducts, stock:renderStock, delivery:renderDelivery, finance:renderFinance, reports:renderReports, users:renderUsers, settings:renderSettings };
   (renderers[view]||renderDashboard)();
 }
 
@@ -257,6 +257,19 @@ async function renderProducts(){
   app.innerHTML = `
     <h1>Cardápio</h1>
     <div class="card" style="max-width:480px">
+      <h3>Categorias</h3>
+      ${categories.map(c=>`
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+          <input value="${c.name}" style="flex:1;margin:0" onchange="updateCategory(${c.id},this.value)">
+          <button class="btn danger" style="padding:8px 12px" onclick="deleteCategory(${c.id})">✕</button>
+        </div>
+      `).join('')}
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input id="newCategoryName" placeholder="Nova categoria" style="flex:1;margin:0">
+        <button class="btn secondary" style="padding:8px 12px" onclick="createCategory()">+</button>
+      </div>
+    </div>
+    <div class="card" style="max-width:480px;margin-top:16px">
       <h3>Novo produto</h3>
       <label>Nome</label><input id="pName">
       <label>Categoria</label>
@@ -303,11 +316,34 @@ async function renderProducts(){
                 <button class="btn secondary" style="padding:8px 12px" onclick="addRecipeItem(${p.id})">+</button>
               </div>
             </div>
+            <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--admin-border)">
+              <button class="btn danger block" onclick="deleteProduct(${p.id})">Excluir produto</button>
+            </div>
           </div>
         </div>
       `).join('')}
     </div>
   `;
+}
+async function createCategory(){
+  const name = document.querySelector('#newCategoryName').value.trim();
+  if(!name) return;
+  try{ await api('/admin/products/categories',{method:'POST',body:JSON.stringify({name})}); go('products'); }
+  catch(e){ alert(e.message); }
+}
+async function updateCategory(id, name){
+  try{ await api('/admin/products/categories/'+id,{method:'PATCH',body:JSON.stringify({name})}); }
+  catch(e){ alert(e.message); }
+}
+async function deleteCategory(id){
+  if(!confirm('Excluir esta categoria?')) return;
+  try{ await api('/admin/products/categories/'+id,{method:'DELETE'}); go('products'); }
+  catch(e){ alert(e.message); }
+}
+async function deleteProduct(id){
+  if(!confirm('Excluir este produto? Essa ação não pode ser desfeita.')) return;
+  try{ await api('/admin/products/'+id,{method:'DELETE'}); go('products'); }
+  catch(e){ alert(e.message); }
 }
 
 const CLOUDINARY_CLOUD_NAME = 'wfj6nhgu';
@@ -397,11 +433,15 @@ async function renderStock(){
       <button class="btn block" onclick="createIngredient()">Adicionar</button>
     </div>
     <table style="margin-top:16px">
-      <thead><tr><th>Ingrediente</th><th>Estoque</th><th>Mínimo</th><th>Custo</th><th>Movimentar</th></tr></thead>
+      <thead><tr><th>Ingrediente</th><th>Unidade</th><th>Estoque</th><th>Mínimo</th><th>Custo</th><th>Movimentar</th><th></th></tr></thead>
       <tbody>
         ${ingredients.map(i => `
           <tr ${i.stock_qty<=i.min_qty?'style="background:#fdecea"':''}>
-            <td>${i.name}</td><td>${i.stock_qty} ${i.unit}</td><td>${i.min_qty}</td><td>${money(i.unit_cost)}</td>
+            <td><input value="${i.name}" style="margin:0;width:140px" onchange="updateIngredient(${i.id},{name:this.value})"></td>
+            <td><input value="${i.unit}" style="margin:0;width:60px" onchange="updateIngredient(${i.id},{unit:this.value})"></td>
+            <td>${i.stock_qty} ${i.unit}</td>
+            <td><input value="${i.min_qty}" type="number" step="0.001" style="margin:0;width:70px" onchange="updateIngredient(${i.id},{minQty:Number(this.value)})"></td>
+            <td><input value="${i.unit_cost}" type="number" step="0.01" style="margin:0;width:80px" onchange="updateIngredient(${i.id},{unitCost:Number(this.value)})"></td>
             <td>
               <select id="mtype-${i.id}" style="width:auto;display:inline-block;margin:0 6px">
                 <option>Entrada</option><option>Saída</option><option>Ajuste</option>
@@ -409,6 +449,7 @@ async function renderStock(){
               <input id="mqty-${i.id}" type="number" step="0.001" style="width:80px;display:inline-block;margin:0 6px">
               <button class="btn secondary" onclick="registerMovement(${i.id})">OK</button>
             </td>
+            <td><button class="btn danger" style="padding:6px 10px" onclick="deleteIngredient(${i.id})">✕</button></td>
           </tr>
         `).join('')}
       </tbody>
@@ -427,11 +468,69 @@ async function createIngredient(){
     go('stock');
   }catch(e){ alert(e.message); }
 }
+async function updateIngredient(id, patch){
+  try{ await api('/admin/stock/'+id,{method:'PATCH',body:JSON.stringify(patch)}); }
+  catch(e){ alert(e.message); }
+}
+async function deleteIngredient(id){
+  if(!confirm('Excluir este ingrediente?')) return;
+  try{ await api('/admin/stock/'+id,{method:'DELETE'}); go('stock'); }
+  catch(e){ alert(e.message); }
+}
 async function registerMovement(id){
   const movementType = document.querySelector('#mtype-'+id).value;
   const quantity = Number(document.querySelector('#mqty-'+id).value||0);
   if(!quantity) return;
   try{ await api('/admin/stock/movements',{method:'POST',body:JSON.stringify({ingredientId:id,movementType,quantity})}); go('stock'); }
+  catch(e){ alert(e.message); }
+}
+
+/* ---------- Entrega (bairros e taxas) ---------- */
+async function renderDelivery(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const zones = await api('/admin/delivery-zones');
+  app.innerHTML = `
+    <h1>Entrega</h1>
+    <p class="muted">Cadastre os bairros que você atende e a taxa de entrega de cada um. O bairro chamado <b>PADRÃO</b> é usado quando o cliente digita um bairro que não está na lista — ajuste essa taxa "coringa" também.</p>
+    <div class="card" style="max-width:480px;margin-top:12px">
+      <h3>Novo bairro</h3>
+      <label>Bairro</label><input id="dNeighborhood" placeholder="ex: Centro">
+      <label>Cidade</label><input id="dCity" placeholder="ex: Sua Cidade">
+      <label>Taxa de entrega</label><input id="dFee" type="number" step="0.01">
+      <button class="btn block" onclick="createDeliveryZone()">Adicionar</button>
+    </div>
+    <table style="margin-top:16px">
+      <thead><tr><th>Bairro</th><th>Cidade</th><th>Taxa</th><th>Ativo</th><th></th></tr></thead>
+      <tbody>
+        ${zones.map(z => `
+          <tr>
+            <td><b>${z.neighborhood}</b></td>
+            <td><input value="${z.city||''}" style="margin:0;width:140px" onchange="updateDeliveryZone(${z.id},{city:this.value})"></td>
+            <td><input value="${z.fee}" type="number" step="0.01" style="margin:0;width:90px" onchange="updateDeliveryZone(${z.id},{fee:Number(this.value)})"></td>
+            <td><input type="checkbox" ${z.active?'checked':''} style="width:auto" onchange="updateDeliveryZone(${z.id},{active:this.checked})"></td>
+            <td><button class="btn danger" style="padding:6px 10px" onclick="deleteDeliveryZone(${z.id})">✕</button></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+async function createDeliveryZone(){
+  const neighborhood = document.querySelector('#dNeighborhood').value.trim();
+  const city = document.querySelector('#dCity').value.trim();
+  const fee = Number(document.querySelector('#dFee').value);
+  if(!neighborhood || !fee) return alert('Informe o bairro e a taxa');
+  try{ await api('/admin/delivery-zones',{method:'POST',body:JSON.stringify({neighborhood,city,fee})}); go('delivery'); }
+  catch(e){ alert(e.message); }
+}
+async function updateDeliveryZone(id, patch){
+  try{ await api('/admin/delivery-zones/'+id,{method:'PATCH',body:JSON.stringify(patch)}); }
+  catch(e){ alert(e.message); }
+}
+async function deleteDeliveryZone(id){
+  if(!confirm('Excluir este bairro?')) return;
+  try{ await api('/admin/delivery-zones/'+id,{method:'DELETE'}); go('delivery'); }
   catch(e){ alert(e.message); }
 }
 
