@@ -13,11 +13,36 @@ router.get("/categories", requireRole("admin", "atendimento", "cozinha"), async 
 router.post("/categories", requireRole("admin"), async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
   const { name, sortOrder } = req.body || {};
+  if (!name) return res.status(400).json({ error: "Nome da categoria é obrigatório" });
+  try {
+    const { rows } = await pool.query(
+      "insert into categories(name,sort_order) values($1,$2) returning *",
+      [name, sortOrder || 0]
+    );
+    res.status(201).json(rows[0]);
+  } catch (e) {
+    res.status(400).json({ error: e.code === "23505" ? "Já existe uma categoria com esse nome" : e.message });
+  }
+});
+
+router.patch("/categories/:id", requireRole("admin"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
+  const { name, sortOrder } = req.body || {};
   const { rows } = await pool.query(
-    "insert into categories(name,sort_order) values($1,$2) returning *",
-    [name, sortOrder || 0]
+    "update categories set name=coalesce($1,name), sort_order=coalesce($2,sort_order) where id=$3 returning *",
+    [name, sortOrder, req.params.id]
   );
-  res.status(201).json(rows[0]);
+  res.json(rows[0] || {});
+});
+
+router.delete("/categories/:id", requireRole("admin"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
+  try {
+    await pool.query("delete from categories where id=$1", [req.params.id]);
+    res.json({ deleted: true });
+  } catch (e) {
+    res.status(400).json({ error: "Não é possível excluir: existem produtos nessa categoria. Mova ou apague os produtos primeiro." });
+  }
 });
 
 router.get("/", requireRole("admin", "atendimento", "cozinha"), async (_, res) => {
@@ -53,6 +78,16 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
     [name, categoryId, description, price, imageUrl, active, promoPrice, promoActive, req.params.id]
   );
   res.json(rows[0] || {});
+});
+
+router.delete("/:id", requireRole("admin"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
+  try {
+    await pool.query("delete from products where id=$1", [req.params.id]);
+    res.json({ deleted: true });
+  } catch (e) {
+    res.status(400).json({ error: "Não é possível excluir: esse produto já tem pedidos ou ficha técnica vinculada. Em vez disso, desative-o (\"Ativo no cardápio\")." });
+  }
 });
 
 export default router;
