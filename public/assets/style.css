@@ -21,7 +21,7 @@ h1,h2,h3,.brand-title{font-family:'Playfair Display',serif}
 /* Fundo discreto com foto de produto, fixo atrás do conteúdo do cardápio público */
 body.cardapio-bg{
   background-image:
-    linear-gradient(180deg, rgba(27,16,11,.94) 0%, rgba(27,16,11,.97) 40%, var(--bg) 100%),
+    linear-gradient(180deg, rgba(27,16,11,.55) 0%, rgba(27,16,11,.82) 55%, var(--bg) 100%),
     url('/assets/hero-bg.jpg');
   background-size: cover;
   background-position: top center;

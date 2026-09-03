@@ -17,7 +17,7 @@ router.get("/", requireRole("admin", "atendimento", "cozinha"), async (req, res)
   }
   const { rows } = await pool.query(
     `select o.id,c.name customer,c.phone,o.order_type,o.status,o.payment_method,
-            o.subtotal,o.delivery_fee,o.total,o.notes,o.created_at,
+            o.subtotal,o.delivery_fee,o.discount_amount,o.coupon_code,o.table_number,o.total,o.notes,o.created_at,
             a.street,a.number,a.complement,a.neighborhood,a.city
      from orders o
      left join customers c on c.id=o.customer_id
@@ -38,8 +38,7 @@ router.get("/:id/items", requireRole("admin", "atendimento", "cozinha"), async (
   res.json(rows);
 });
 
-router.patch("/:id/status", requireRole("admin", "atendimento", "cozinha"), async (req, res) => {
-  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
+router.patch("/:id/status", requireRole("admin", "atendimento", "cozinha"), async (req, res) => {  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
   const { status } = req.body || {};
   if (!STATUS_FLOW.includes(status)) return res.status(400).json({ error: "Status inválido" });
   if (req.user.role === "cozinha" && !KITCHEN_ALLOWED.includes(status)) {
@@ -86,6 +85,34 @@ router.patch("/:id/status", requireRole("admin", "atendimento", "cozinha"), asyn
 
     await client.query("commit");
     res.json(upd.rows[0]);
+  } catch (e) {
+    await client.query("rollback");
+    res.status(400).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete("/:id", requireRole("admin"), async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+
+    // Devolve ao estoque qualquer ingrediente que tenha sido baixado por esse pedido
+    await client.query(
+      `update ingredients i set stock_qty = stock_qty + sub.total
+       from (select ingredient_id, sum(quantity) as total from stock_movements where order_id=$1 group by ingredient_id) sub
+       where i.id = sub.ingredient_id`,
+      [req.params.id]
+    );
+    await client.query("delete from stock_movements where order_id=$1", [req.params.id]);
+    await client.query("delete from finance_entries where order_id=$1", [req.params.id]);
+    const del = await client.query("delete from orders where id=$1 returning id", [req.params.id]);
+    if (!del.rows[0]) throw new Error("Pedido não encontrado");
+
+    await client.query("commit");
+    res.json({ deleted: true });
   } catch (e) {
     await client.query("rollback");
     res.status(400).json({ error: e.message });

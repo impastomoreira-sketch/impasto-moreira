@@ -17,6 +17,8 @@ import reportRoutes from "./src/routes/reportRoutes.js";
 import userRoutes from "./src/routes/userRoutes.js";
 import settingsRoutes from "./src/routes/settingsRoutes.js";
 import deliveryRoutes from "./src/routes/deliveryRoutes.js";
+import couponsRoutes from "./src/routes/couponsRoutes.js";
+import paymentMethodsRoutes from "./src/routes/paymentMethodsRoutes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -68,6 +70,8 @@ app.use("/api/admin/reports", auth, requireRole("admin"), reportRoutes);
 app.use("/api/admin/users", auth, requireRole("admin"), userRoutes);
 app.use("/api/admin/settings", auth, requireRole("admin"), settingsRoutes);
 app.use("/api/admin/delivery-zones", auth, requireRole("admin"), deliveryRoutes);
+app.use("/api/admin/coupons", auth, requireRole("admin"), couponsRoutes);
+app.use("/api/admin/payment-methods", auth, requireRole("admin"), paymentMethodsRoutes);
 
 // Placeholders documentados para a próxima etapa (PIX, WhatsApp, impressão, tempo real)
 app.use("/api/integrations", (req, res) => {

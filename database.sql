@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS products (
   image_url TEXT,
   promo_price NUMERIC(10,2),
   promo_active BOOLEAN DEFAULT FALSE,
+  promo_days TEXT[],
   active BOOLEAN DEFAULT TRUE
 );
 
@@ -80,11 +81,14 @@ CREATE TABLE IF NOT EXISTS orders (
   id BIGSERIAL PRIMARY KEY,
   customer_id BIGINT REFERENCES customers(id),
   address_id BIGINT REFERENCES addresses(id),
-  order_type VARCHAR(20) NOT NULL CHECK (order_type IN ('Delivery','Retirada')),
+  order_type VARCHAR(20) NOT NULL CHECK (order_type IN ('Delivery','Retirada','Mesa')),
   status VARCHAR(30) NOT NULL DEFAULT 'Recebido',
   payment_method VARCHAR(30),
   subtotal NUMERIC(10,2) NOT NULL,
   delivery_fee NUMERIC(10,2) DEFAULT 0,
+  coupon_code VARCHAR(40),
+  discount_amount NUMERIC(10,2) DEFAULT 0,
+  table_number VARCHAR(10),
   total NUMERIC(10,2) NOT NULL,
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),
@@ -134,6 +138,26 @@ CREATE TABLE IF NOT EXISTS stock_movements (
 CREATE TABLE IF NOT EXISTS settings (
   key VARCHAR(60) PRIMARY KEY,
   value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS coupons (
+  id BIGSERIAL PRIMARY KEY,
+  code VARCHAR(40) NOT NULL UNIQUE,
+  discount_type VARCHAR(10) NOT NULL CHECK (discount_type IN ('percent','fixed')),
+  discount_value NUMERIC(10,2) NOT NULL,
+  min_order_value NUMERIC(10,2) DEFAULT 0,
+  max_uses INTEGER,
+  used_count INTEGER DEFAULT 0,
+  valid_until DATE,
+  active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS payment_methods (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(60) NOT NULL UNIQUE,
+  sort_order INTEGER DEFAULT 0,
+  active BOOLEAN DEFAULT TRUE
 );
 
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
@@ -197,6 +221,10 @@ INSERT INTO settings(key,value) VALUES
 ('menu_public_url',''),
 ('instagram_url','')
 ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO payment_methods(name,sort_order) VALUES
+('PIX',1),('Cartão na entrega',2),('Dinheiro',3)
+ON CONFLICT (name) DO NOTHING;
 
 -- Ajuste os bairros e taxas de "delivery_zones" para a região real da pizzaria
 -- antes de publicar. Nenhum usuário administrador é criado aqui — use

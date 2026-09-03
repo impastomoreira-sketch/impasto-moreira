@@ -65,7 +65,7 @@ async function doLogin(){
 }
 
 const NAV_BY_ROLE = {
-  admin: [['dashboard','Dashboard'],['orders','Pedidos'],['kitchen','Cozinha'],['products','Cardápio'],['stock','Estoque'],['delivery','Entrega'],['finance','Financeiro'],['reports','Relatórios'],['users','Usuários'],['settings','Configurações']],
+  admin: [['dashboard','Dashboard'],['orders','Pedidos'],['kitchen','Cozinha'],['products','Cardápio'],['stock','Estoque'],['delivery','Entrega'],['coupons','Cupons'],['finance','Financeiro'],['reports','Relatórios'],['users','Usuários'],['settings','Configurações']],
   atendimento: [['orders','Pedidos'],['kitchen','Cozinha']],
   cozinha: [['kitchen','Cozinha']]
 };
@@ -84,7 +84,7 @@ function go(view){
   document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
   const btn = document.querySelector('#nav-'+view);
   if(btn) btn.classList.add('active');
-  const renderers = { dashboard:renderDashboard, orders:renderOrders, kitchen:renderKitchen, products:renderProducts, stock:renderStock, delivery:renderDelivery, finance:renderFinance, reports:renderReports, users:renderUsers, settings:renderSettings };
+  const renderers = { dashboard:renderDashboard, orders:renderOrders, kitchen:renderKitchen, products:renderProducts, stock:renderStock, delivery:renderDelivery, coupons:renderCoupons, finance:renderFinance, reports:renderReports, users:renderUsers, settings:renderSettings };
   (renderers[view]||renderDashboard)();
 }
 
@@ -199,14 +199,16 @@ async function renderOrders(){
         <div class="card">
           <b>#${o.id} — ${o.customer||'Cliente'}</b>
           <p class="muted">${o.phone||''}</p>
-          <p>${o.order_type}${o.neighborhood ? ' • '+o.neighborhood : ''} • ${o.payment_method}</p>
+          <p>${o.order_type}${o.table_number ? ' • Mesa '+o.table_number : ''}${o.neighborhood ? ' • '+o.neighborhood : ''} • ${o.payment_method}</p>
           <p><span class="badge" data-status="${o.status}">${o.status}</span></p>
           <b>${money(o.total)}</b>
+          ${o.discount_amount>0 ? `<p class="muted">Cupom ${o.coupon_code}: -${money(o.discount_amount)}</p>` : ''}
           <div style="margin-top:10px">
             <select onchange="updateStatus(${o.id},this.value)">
               ${['Recebido','Preparando','Pronto','Saiu para entrega','Entregue','Cancelado'].map(s=>`<option ${s===o.status?'selected':''}>${s}</option>`).join('')}
             </select>
           </div>
+          ${user.role==='admin' ? `<button class="btn danger" style="margin-top:8px;padding:6px 10px;font-size:.8rem" onclick="deleteOrder(${o.id})">Excluir pedido</button>` : ''}
         </div>
       `).join('') || '<p class="muted">Nenhum pedido ainda.</p>'}
     </div>
@@ -215,6 +217,11 @@ async function renderOrders(){
 
 async function updateStatus(id, status){
   try{ await api(`/admin/orders/${id}/status`,{method:'PATCH',body:JSON.stringify({status})}); go(currentView); }
+  catch(e){ alert(e.message); }
+}
+async function deleteOrder(id){
+  if(!confirm('Excluir este pedido? Isso desfaz a baixa de estoque e o lançamento financeiro ligados a ele. Não pode ser desfeito.')) return;
+  try{ await api(`/admin/orders/${id}`,{method:'DELETE'}); go(currentView); }
   catch(e){ alert(e.message); }
 }
 
@@ -230,6 +237,7 @@ async function renderKitchen(){
       ${withItems.map(o => `
         <div class="card kitchen-card">
           <b>#${o.id} — ${o.customer||'Cliente'}</b>
+          ${o.table_number ? `<p class="muted">Mesa ${o.table_number}</p>` : ''}
           <span class="badge" data-status="${o.status}">${o.status}</span>
           <div class="items">${o.items.map(i=>`${i.quantity}× ${i.product_name}`).join('<br>')}</div>
           ${o.notes ? `<p class="muted">Obs: ${o.notes}</p>` : ''}
@@ -299,12 +307,22 @@ async function renderProducts(){
               <label><input type="checkbox" ${p.promo_active?'checked':''} onchange="updateProduct(${p.id},{promoActive:this.checked})" style="width:auto;display:inline-block"> Em promoção</label>
               <label>Preço promocional</label>
               <input value="${p.promo_price||''}" placeholder="ex: 44.90" onchange="updateProduct(${p.id},{promoPrice:Number(this.value)})">
+              <label>Dias da promoção (vazio = todos os dias)</label>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0">
+                ${[['mon','Seg'],['tue','Ter'],['wed','Qua'],['thu','Qui'],['fri','Sex'],['sat','Sáb'],['sun','Dom']].map(([code,label])=>`
+                  <label style="display:inline-flex;align-items:center;gap:3px;font-size:.75rem;border:1px solid var(--admin-border);border-radius:6px;padding:4px 7px;cursor:pointer">
+                    <input type="checkbox" value="${code}" ${(p.promo_days||[]).includes(code)?'checked':''} style="width:auto" onchange="togglePromoDay(${p.id})" data-product="${p.id}" class="promo-day-${p.id}"> ${label}
+                  </label>
+                `).join('')}
+              </div>
             </div>
             <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--admin-border)">
               <b style="font-size:.85rem">Ficha técnica (usada para calcular o CMV)</b>
               ${(recipesByProduct[p.id]||[]).map(r=>`
-                <div style="display:flex;justify-content:space-between;align-items:center;font-size:.85rem;margin-top:6px">
-                  <span>${r.ingredient_name} — ${r.quantity} ${r.unit}</span>
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:.85rem;margin-top:6px;gap:6px">
+                  <span style="flex:1">${r.ingredient_name}</span>
+                  <input type="number" step="0.001" value="${r.quantity}" style="width:70px;margin:0;font-size:.8rem" onchange="updateRecipeQty(${r.id},this.value,${p.id})">
+                  <span class="muted" style="font-size:.75rem">${r.unit}</span>
                   <button class="btn secondary" style="padding:2px 8px;font-size:.75rem" onclick="removeRecipeItem(${r.id},${p.id})">✕</button>
                 </div>
               `).join('') || '<p class="muted" style="font-size:.8rem;margin-top:6px">Nenhum ingrediente vinculado ainda</p>'}
@@ -403,6 +421,12 @@ async function updateProduct(id, patch){
   try{ await api(`/admin/products/${id}`,{method:'PATCH',body:JSON.stringify(patch)}); go('products'); }
   catch(e){ alert(e.message); }
 }
+async function togglePromoDay(productId){
+  const checked = document.querySelectorAll('.promo-day-'+productId+':checked');
+  const days = Array.from(checked).map(el=>el.value);
+  try{ await api(`/admin/products/${productId}`,{method:'PATCH',body:JSON.stringify({promoDays:days})}); }
+  catch(e){ alert(e.message); }
+}
 
 async function addRecipeItem(productId){
   const ingredientId = Number(document.querySelector('#recIng-'+productId).value);
@@ -413,6 +437,10 @@ async function addRecipeItem(productId){
 }
 async function removeRecipeItem(recipeId, productId){
   try{ await api('/admin/stock/recipes/'+recipeId,{method:'DELETE'}); go('products'); }
+  catch(e){ alert(e.message); }
+}
+async function updateRecipeQty(recipeId, quantity, productId){
+  try{ await api('/admin/stock/recipes/'+recipeId,{method:'PATCH',body:JSON.stringify({quantity:Number(quantity)})}); }
   catch(e){ alert(e.message); }
 }
 
@@ -534,6 +562,70 @@ async function deleteDeliveryZone(id){
   catch(e){ alert(e.message); }
 }
 
+/* ---------- Cupons de desconto ---------- */
+async function renderCoupons(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const coupons = await api('/admin/coupons');
+  app.innerHTML = `
+    <h1>Cupons de desconto</h1>
+    <div class="card" style="max-width:480px">
+      <h3>Novo cupom</h3>
+      <label>Código (o cliente vai digitar isso)</label>
+      <input id="cCode" placeholder="ex: PIZZA10" style="text-transform:uppercase">
+      <label>Tipo de desconto</label>
+      <select id="cType"><option value="percent">Percentual (%)</option><option value="fixed">Valor fixo (R$)</option></select>
+      <label>Valor do desconto</label>
+      <input id="cValue" type="number" step="0.01" placeholder="ex: 10">
+      <label>Pedido mínimo</label>
+      <input id="cMin" type="number" step="0.01" placeholder="ex: 40">
+      <label>Limite de usos (vazio = ilimitado)</label>
+      <input id="cMax" type="number" step="1">
+      <label>Válido até (vazio = sem prazo)</label>
+      <input id="cUntil" type="date">
+      <button class="btn block" onclick="createCoupon()">Criar cupom</button>
+    </div>
+    <table style="margin-top:16px">
+      <thead><tr><th>Código</th><th>Desconto</th><th>Mín.</th><th>Usos</th><th>Válido até</th><th>Ativo</th><th></th></tr></thead>
+      <tbody>
+        ${coupons.map(c => `
+          <tr>
+            <td><b>${c.code}</b></td>
+            <td>${c.discount_type==='percent' ? c.discount_value+'%' : money(c.discount_value)}</td>
+            <td>${money(c.min_order_value)}</td>
+            <td>${c.used_count}${c.max_uses?'/'+c.max_uses:''}</td>
+            <td>${c.valid_until ? new Date(c.valid_until).toLocaleDateString('pt-BR') : '—'}</td>
+            <td><input type="checkbox" ${c.active?'checked':''} style="width:auto" onchange="updateCoupon(${c.id},{active:this.checked})"></td>
+            <td><button class="btn danger" style="padding:6px 10px" onclick="deleteCoupon(${c.id})">✕</button></td>
+          </tr>
+        `).join('') || '<tr><td colspan="7" class="muted">Nenhum cupom criado ainda</td></tr>'}
+      </tbody>
+    </table>
+  `;
+}
+async function createCoupon(){
+  try{
+    await api('/admin/coupons',{method:'POST',body:JSON.stringify({
+      code: document.querySelector('#cCode').value,
+      discountType: document.querySelector('#cType').value,
+      discountValue: Number(document.querySelector('#cValue').value),
+      minOrderValue: Number(document.querySelector('#cMin').value||0),
+      maxUses: document.querySelector('#cMax').value ? Number(document.querySelector('#cMax').value) : null,
+      validUntil: document.querySelector('#cUntil').value || null
+    })});
+    go('coupons');
+  }catch(e){ alert(e.message); }
+}
+async function updateCoupon(id, patch){
+  try{ await api('/admin/coupons/'+id,{method:'PATCH',body:JSON.stringify(patch)}); }
+  catch(e){ alert(e.message); }
+}
+async function deleteCoupon(id){
+  if(!confirm('Excluir este cupom?')) return;
+  try{ await api('/admin/coupons/'+id,{method:'DELETE'}); go('coupons'); }
+  catch(e){ alert(e.message); }
+}
+
 /* ---------- Financeiro ---------- */
 async function renderFinance(){
   const app = document.querySelector('#app');
@@ -649,7 +741,7 @@ async function toggleUserActive(id, active){
 async function renderSettings(){
   const app = document.querySelector('#app');
   app.innerHTML = '<p class="muted">Carregando...</p>';
-  const s = await api('/admin/settings');
+  const [s, paymentMethods] = await Promise.all([api('/admin/settings'), api('/admin/payment-methods')]);
   const menuUrl = window.location.origin + '/';
   const qrSrc = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=' + encodeURIComponent(menuUrl);
   app.innerHTML = `
@@ -666,13 +758,61 @@ async function renderSettings(){
         <input id="sInstagram" value="${s.instagramUrl||''}" placeholder="https://instagram.com/impastomoreira">
         <button class="btn block" onclick="saveSettings()">Salvar</button>
       </div>
+      <div class="card">
+        <h3>Formas de pagamento</h3>
+        <p class="muted">Aparecem, nessa ordem, no checkout do cardápio.</p>
+        ${paymentMethods.map(pm => `
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+            <input value="${pm.name}" style="flex:1;margin:0" onchange="updatePaymentMethod(${pm.id},{name:this.value})">
+            <input type="checkbox" ${pm.active?'checked':''} style="width:auto" title="Ativo" onchange="updatePaymentMethod(${pm.id},{active:this.checked})">
+            <button class="btn danger" style="padding:8px 12px" onclick="deletePaymentMethod(${pm.id})">✕</button>
+          </div>
+        `).join('')}
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <input id="newPaymentName" placeholder="Nova forma de pagamento" style="flex:1;margin:0">
+          <button class="btn secondary" style="padding:8px 12px" onclick="createPaymentMethod()">+</button>
+        </div>
+      </div>
       <div class="card" style="text-align:center">
         <h3>Divulgue seu cardápio</h3>
         <img src="${qrSrc}" alt="QR Code do cardápio" style="border-radius:12px;margin:8px 0">
         <p class="muted" style="word-break:break-all">${menuUrl}</p>
         <button class="btn secondary block" onclick="navigator.clipboard.writeText('${menuUrl}');this.textContent='Link copiado!'">Copiar link</button>
       </div>
+      <div class="card" style="text-align:center">
+        <h3>QR Code de mesa (atendimento no salão)</h3>
+        <p class="muted">Gere um QR por mesa — ao escanear, o cliente já cai no cardápio com "Mesa" pré-selecionada.</p>
+        <input id="tableNumber" type="number" placeholder="Número da mesa" style="max-width:200px;margin:8px auto">
+        <button class="btn block" style="max-width:200px;margin:0 auto" onclick="generateTableQR()">Gerar QR</button>
+        <div id="tableQRResult" style="margin-top:14px"></div>
+      </div>
     </div>
+  `;
+}
+async function createPaymentMethod(){
+  const name = document.querySelector('#newPaymentName').value.trim();
+  if(!name) return;
+  try{ await api('/admin/payment-methods',{method:'POST',body:JSON.stringify({name})}); go('settings'); }
+  catch(e){ alert(e.message); }
+}
+async function updatePaymentMethod(id, patch){
+  try{ await api('/admin/payment-methods/'+id,{method:'PATCH',body:JSON.stringify(patch)}); }
+  catch(e){ alert(e.message); }
+}
+async function deletePaymentMethod(id){
+  if(!confirm('Excluir esta forma de pagamento?')) return;
+  try{ await api('/admin/payment-methods/'+id,{method:'DELETE'}); go('settings'); }
+  catch(e){ alert(e.message); }
+}
+function generateTableQR(){
+  const n = document.querySelector('#tableNumber').value;
+  if(!n) return alert('Informe o número da mesa');
+  const url = window.location.origin + '/?mesa=' + encodeURIComponent(n);
+  const qrSrc = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(url);
+  document.querySelector('#tableQRResult').innerHTML = `
+    <p><b>Mesa ${n}</b></p>
+    <img src="${qrSrc}" alt="QR mesa ${n}" style="border-radius:10px">
+    <p class="muted" style="word-break:break-all;font-size:.8rem">${url}</p>
   `;
 }
 async function saveSettings(){

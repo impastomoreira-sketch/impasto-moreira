@@ -38,14 +38,24 @@
 <div class="drawer" id="drawer"></div>
 
 <script>
+window.onerror = function(msg, url, line, col, error){
+  const banner = document.createElement('div');
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#c0392b;color:#fff;padding:10px;font-size:12px;z-index:99999;white-space:pre-wrap;font-family:monospace';
+  banner.textContent = 'Erro JS: ' + msg + ' (linha ' + line + ')';
+  document.body.appendChild(banner);
+};
 const money = n => Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 let menu = [];
 let settings = { restaurantName: "Impasto Moreira", whatsappNumber: "" };
+let paymentMethods = ["PIX", "Cartão na entrega", "Dinheiro"];
 let cart = JSON.parse(localStorage.im_cart || "[]");
 let step = "carrinho"; // carrinho -> entrega -> confirmação
 let orderType = "Delivery";
 let deliveryFee = 0;
 let lastOrder = null;
+let appliedCoupon = null; // { code, discountAmount }
+const urlParams = new URLSearchParams(window.location.search);
+const tableFromUrl = urlParams.get('mesa');
 
 function saveCart(){ localStorage.im_cart = JSON.stringify(cart); renderCartCount(); }
 function renderCartCount(){ document.querySelector('#cartCount').textContent = cart.reduce((s,i)=>s+i.quantity,0); }
@@ -141,9 +151,13 @@ async function renderCart(){
       <div class="step-tabs">
         <button id="tabDelivery" class="active" onclick="setOrderType('Delivery')">Entrega</button>
         <button id="tabPickup" onclick="setOrderType('Retirada')">Retirada</button>
+        <button id="tabTable" onclick="setOrderType('Mesa')">Mesa</button>
       </div>
       <label>Nome</label><input id="fCustomer">
       <label>Telefone / WhatsApp</label><input id="fPhone" placeholder="(00) 00000-0000">
+      <div id="tableField" style="display:none">
+        <label>Número da mesa</label><input id="fTable" type="number" value="${tableFromUrl||''}">
+      </div>
       <div id="addressFields">
         <label>Rua</label><input id="fStreet">
         <label>Número</label><input id="fNumber">
@@ -154,16 +168,25 @@ async function renderCart(){
       </div>
       <label>Forma de pagamento</label>
       <select id="fPayment">
-        <option>PIX</option><option>Cartão na entrega</option><option>Dinheiro</option>
+        ${paymentMethods.map(pm=>`<option>${pm}</option>`).join('')}
       </select>
       <label>Observações</label><textarea id="fNotes" rows="2" placeholder="Ex: sem cebola, troco para R$100..."></textarea>
+      <label>Cupom de desconto</label>
+      <div style="display:flex;gap:6px">
+        <input id="fCoupon" placeholder="ex: PIZZA10" style="flex:1;text-transform:uppercase" value="${appliedCoupon?appliedCoupon.code:''}">
+        <button class="btn secondary" style="padding:11px 14px" onclick="applyCoupon()">Aplicar</button>
+      </div>
+      <p class="muted" id="couponInfo">${appliedCoupon ? `Cupom ${appliedCoupon.code} aplicado: -${money(appliedCoupon.discountAmount)}` : ''}</p>
       <div class="cart-total"><span>Subtotal</span><span>${money(cartSubtotal())}</span></div>
+      ${appliedCoupon ? `<div class="cart-total" style="color:#8fe0a0"><span>Desconto</span><span>-${money(appliedCoupon.discountAmount)}</span></div>` : ''}
       <div class="cart-total" id="feeLine"><span>Taxa de entrega</span><span>${money(deliveryFee)}</span></div>
-      <div class="cart-total" style="border-top:1px solid var(--border);padding-top:10px"><span>Total</span><span id="totalLine">${money(cartSubtotal()+deliveryFee)}</span></div>
+      <div class="cart-total" style="border-top:1px solid var(--border);padding-top:10px"><span>Total</span><span id="totalLine">${money(cartTotal())}</span></div>
       <button class="btn block" onclick="submitOrder()">Confirmar pedido</button>
       ${settings.whatsappNumber ? `<button class="btn block" style="margin-top:8px;background:#25D366;color:#0b2e17" onclick="submitOrder(true)">📲 Confirmar e enviar pelo WhatsApp</button>` : ''}
       <button class="btn secondary block" style="margin-top:8px" onclick="step='carrinho';renderCart()">Voltar</button>
     `;
+    if(tableFromUrl && orderType!=='Mesa') setOrderType('Mesa');
+    else if(orderType==='Mesa'){ document.querySelector('#tabTable').classList.add('active'); document.querySelector('#tabDelivery').classList.remove('active'); document.querySelector('#addressFields').style.display='none'; document.querySelector('#tableField').style.display='block'; }
   } else if(step==="confirmacao"){
     d.innerHTML = `
       <h2 style="color:var(--gold-light)">Pedido enviado! 🎉</h2>
@@ -179,9 +202,25 @@ function setOrderType(type){
   orderType = type;
   document.querySelector('#tabDelivery').classList.toggle('active', type==='Delivery');
   document.querySelector('#tabPickup').classList.toggle('active', type==='Retirada');
+  document.querySelector('#tabTable').classList.toggle('active', type==='Mesa');
   document.querySelector('#addressFields').style.display = type==='Delivery' ? 'block':'none';
-  if(type==='Retirada'){ deliveryFee = 0; updateTotals(); }
+  document.querySelector('#tableField').style.display = type==='Mesa' ? 'block':'none';
+  if(type!=='Delivery'){ deliveryFee = 0; updateTotals(); }
   else lookupFee();
+}
+
+function cartTotal(){ return Math.max(0, cartSubtotal() - (appliedCoupon?appliedCoupon.discountAmount:0) + deliveryFee); }
+
+async function applyCoupon(){
+  const code = document.querySelector('#fCoupon').value.trim();
+  if(!code) return;
+  const r = await fetch('/api/public/coupons/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,subtotal:cartSubtotal()})});
+  const x = await r.json();
+  const info = document.querySelector('#couponInfo');
+  if(!r.ok){ appliedCoupon = null; info.textContent = '❌ '+(x.error||'Cupom inválido'); updateTotals(); return; }
+  appliedCoupon = { code: x.code, discountAmount: x.discountAmount };
+  info.textContent = `✅ Cupom ${x.code} aplicado: -${money(x.discountAmount)}`;
+  updateTotals();
 }
 
 async function lookupFee(){
@@ -193,7 +232,7 @@ async function lookupFee(){
 }
 function updateTotals(){
   document.querySelector('#feeLine').innerHTML = `<span>Taxa de entrega</span><span>${money(deliveryFee)}</span>`;
-  document.querySelector('#totalLine').textContent = money(cartSubtotal()+deliveryFee);
+  document.querySelector('#totalLine').textContent = money(cartTotal());
 }
 
 async function submitOrder(viaWhatsApp){
@@ -207,10 +246,13 @@ async function submitOrder(viaWhatsApp){
     neighborhood: document.querySelector('#fNeighborhood').value,
     city: document.querySelector('#fCity').value
   } : null;
+  const tableNumber = orderType==='Mesa' ? document.querySelector('#fTable').value : null;
+  if(orderType==='Mesa' && !tableNumber) return alert('Informe o número da mesa.');
   const paymentMethod = document.querySelector('#fPayment').value;
   const notes = document.querySelector('#fNotes').value;
   const payload = {
-    customer, phone, orderType, paymentMethod, notes, address,
+    customer, phone, orderType, paymentMethod, notes, address, tableNumber,
+    couponCode: appliedCoupon ? appliedCoupon.code : null,
     items: cart.map(i=>({productId:i.productId,quantity:i.quantity}))
   };
   const r = await fetch('/api/public/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -218,12 +260,13 @@ async function submitOrder(viaWhatsApp){
   if(!r.ok) return alert(x.error || 'Não foi possível enviar o pedido.');
   lastOrder = x;
   saveMyOrder(x.orderId);
+  appliedCoupon = null;
 
   if(viaWhatsApp && settings.whatsappNumber){
     const lines = [
       `*Novo pedido #${x.orderId} — ${settings.restaurantName}*`,
       ...cart.map(i=>`${i.quantity}x ${i.name} — ${money(i.price*i.quantity)}`),
-      orderType==='Delivery' ? `Entrega: ${address.street}, ${address.number} - ${address.neighborhood}` : 'Retirada no local',
+      orderType==='Delivery' ? `Entrega: ${address.street}, ${address.number} - ${address.neighborhood}` : (orderType==='Mesa' ? `Mesa ${tableNumber}` : 'Retirada no local'),
       `Pagamento: ${paymentMethod}`,
       notes ? `Obs: ${notes}` : null,
       `*Total: ${money(x.total)}*`,
@@ -297,6 +340,10 @@ async function loadSettings(){
       link.href = settings.instagramUrl;
       link.style.display = 'inline-flex';
     }
+  }catch{}
+  try{
+    const pm = await fetch('/api/public/payment-methods').then(r=>r.json());
+    if(pm.length) paymentMethods = pm;
   }catch{}
 }
 

@@ -98,4 +98,14 @@ router.delete("/recipes/:id", async (req, res) => {
   res.json({ deleted: true });
 });
 
+router.patch("/recipes/:id", async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
+  const { quantity } = req.body || {};
+  const { rows } = await pool.query(
+    "update recipes set quantity=$1 where id=$2 returning *",
+    [quantity, req.params.id]
+  );
+  res.json(rows[0] || {});
+});
+
 export default router;
