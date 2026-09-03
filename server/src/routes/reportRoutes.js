@@ -44,7 +44,10 @@ router.get("/low-stock", async (_, res) => {
 // CMV (Custo da Mercadoria Vendida) — teórico por produto, com base na ficha técnica atual,
 // e o CMV realizado, ponderado pelas vendas de fato registradas nos pedidos.
 router.get("/cmv", async (_, res) => {
-  if (!pool) return res.json({ products: [], overall: { totalCost: 0, totalRevenue: 0, cmvPercent: 0 } });
+  if (!pool) return res.json({ products: [], overall: { totalCost: 0, totalRevenue: 0, cmvPercent: 0 }, targetMarkupPercent: 230 });
+
+  const settingsRows = await pool.query("select value from settings where key='target_markup_percent'");
+  const targetMarkupPercent = Number(settingsRows.rows[0]?.value || 230);
 
   const perProduct = await pool.query(`
     select p.id, p.name, p.price, p.manual_cost,
@@ -62,6 +65,7 @@ router.get("/cmv", async (_, res) => {
     const cost = hasManualCost ? Number(row.manual_cost) : Number(row.recipe_cost);
     const costSource = hasManualCost ? "manual" : "ficha técnica";
     const cmvPercent = price > 0 ? (cost / price) * 100 : 0;
+    const suggestedPrice = cost * (1 + targetMarkupPercent / 100);
     return {
       id: row.id,
       name: row.name,
@@ -69,7 +73,9 @@ router.get("/cmv", async (_, res) => {
       cost: Number(cost.toFixed(2)),
       costSource,
       cmvPercent: Number(cmvPercent.toFixed(1)),
-      marginPercent: Number((100 - cmvPercent).toFixed(1))
+      marginPercent: Number((100 - cmvPercent).toFixed(1)),
+      profitPerUnit: Number((price - cost).toFixed(2)),
+      suggestedPrice: Number(suggestedPrice.toFixed(2))
     };
   });
 
@@ -91,7 +97,7 @@ router.get("/cmv", async (_, res) => {
   const totalRevenue = Number(overallQuery.rows[0].total_revenue);
   const cmvPercent = totalRevenue > 0 ? Number(((totalCost / totalRevenue) * 100).toFixed(1)) : 0;
 
-  res.json({ products, overall: { totalCost: Number(totalCost.toFixed(2)), totalRevenue: Number(totalRevenue.toFixed(2)), cmvPercent } });
+  res.json({ products, overall: { totalCost: Number(totalCost.toFixed(2)), totalRevenue: Number(totalRevenue.toFixed(2)), cmvPercent }, targetMarkupPercent });
 });
 
 export default router;
