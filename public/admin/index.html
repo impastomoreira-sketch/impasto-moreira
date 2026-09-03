@@ -683,10 +683,10 @@ async function renderReports(){
       <div class="card"><span class="muted">Receita das vendas</span><div class="kpi">${money(cmv.overall.totalRevenue)}</div></div>
       <div class="card"><span class="muted">CMV realizado</span><div class="kpi">${cmv.overall.cmvPercent}%</div></div>
     </div>
-    <p class="muted" style="margin-top:10px">CMV realizado é calculado com base nos pedidos já feitos. A tabela abaixo mostra o CMV teórico de cada produto, pela ficha técnica e preço atuais — cadastre ingredientes e fichas técnicas em Estoque para todos os produtos para o número ficar completo.</p>
+    <p class="muted" style="margin-top:10px">CMV realizado é calculado com base nos pedidos já feitos. Preço sugerido = custo × (1 + margem alvo de ${cmv.targetMarkupPercent}% — ajuste em Configurações). A caixa de pizza não entra nesse custo, é controlada separadamente.</p>
     <table style="margin-top:10px">
-      <thead><tr><th>Produto</th><th>Preço</th><th>Custo</th><th>Origem do custo</th><th>CMV</th><th>Margem</th></tr></thead>
-      <tbody>${cmv.products.map(p=>`<tr><td>${p.name}</td><td>${money(p.price)}</td><td>${money(p.cost)}</td><td class="muted" style="font-size:.8rem">${p.costSource}</td><td>${p.cmvPercent}%</td><td>${p.marginPercent}%</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sem produtos ativos</td></tr>'}</tbody>
+      <thead><tr><th>Produto</th><th>Preço cobrado</th><th>Custo</th><th>Origem</th><th>CMV</th><th>Lucro/un.</th><th>Preço sugerido</th></tr></thead>
+      <tbody>${cmv.products.map(p=>`<tr><td>${p.name}</td><td>${money(p.price)}</td><td>${money(p.cost)}</td><td class="muted" style="font-size:.8rem">${p.costSource}</td><td>${p.cmvPercent}%</td><td>${money(p.profitPerUnit)}</td><td class="muted">${money(p.suggestedPrice)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Sem produtos ativos</td></tr>'}</tbody>
     </table>
     <h2 class="category-title" style="color:var(--gold)">Vendas por dia</h2>
     <table><thead><tr><th>Dia</th><th>Pedidos</th><th>Total</th></tr></thead>
@@ -761,6 +761,8 @@ async function renderSettings(){
         <p class="muted">Preenchido, o cardápio público mostra o botão "Confirmar e enviar pelo WhatsApp" no checkout.</p>
         <label>Instagram (link completo)</label>
         <input id="sInstagram" value="${s.instagramUrl||''}" placeholder="https://instagram.com/impastomoreira">
+        <label>Margem de lucro alvo (%) — usada para calcular o "Preço sugerido" em Relatórios</label>
+        <input id="sMarkup" type="number" step="1" value="${s.targetMarkupPercent||230}">
         <button class="btn block" onclick="saveSettings()">Salvar</button>
       </div>
       <div class="card">
@@ -825,7 +827,8 @@ async function saveSettings(){
     await api('/admin/settings',{method:'PATCH',body:JSON.stringify({
       restaurantName: document.querySelector('#sName').value,
       whatsappNumber: document.querySelector('#sWhats').value.replace(/\D/g,''),
-      instagramUrl: document.querySelector('#sInstagram').value
+      instagramUrl: document.querySelector('#sInstagram').value,
+      targetMarkupPercent: Number(document.querySelector('#sMarkup').value)
     })});
     go('settings');
   }catch(e){ alert(e.message); }
