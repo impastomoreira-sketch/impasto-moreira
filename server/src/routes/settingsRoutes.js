@@ -3,12 +3,13 @@ import { pool } from "../db.js";
 
 const router = Router();
 
-export const SETTINGS_KEYS = ["restaurant_name", "whatsapp_number", "menu_public_url", "instagram_url"];
+export const SETTINGS_KEYS = ["restaurant_name", "whatsapp_number", "menu_public_url", "instagram_url", "target_markup_percent"];
 const FIELD_TO_KEY = {
   restaurantName: "restaurant_name",
   whatsappNumber: "whatsapp_number",
   menuPublicUrl: "menu_public_url",
-  instagramUrl: "instagram_url"
+  instagramUrl: "instagram_url",
+  targetMarkupPercent: "target_markup_percent"
 };
 
 export async function readSettings() {
@@ -22,7 +23,8 @@ function toPublicShape(s) {
     restaurantName: s.restaurant_name || "",
     whatsappNumber: s.whatsapp_number || "",
     menuPublicUrl: s.menu_public_url || "",
-    instagramUrl: s.instagram_url || ""
+    instagramUrl: s.instagram_url || "",
+    targetMarkupPercent: s.target_markup_percent || "230"
   };
 }
 
