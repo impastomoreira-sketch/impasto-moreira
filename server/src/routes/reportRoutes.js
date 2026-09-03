@@ -47,24 +47,27 @@ router.get("/cmv", async (_, res) => {
   if (!pool) return res.json({ products: [], overall: { totalCost: 0, totalRevenue: 0, cmvPercent: 0 } });
 
   const perProduct = await pool.query(`
-    select p.id, p.name, p.price,
-      coalesce(sum(r.quantity * i.unit_cost),0) as cost
+    select p.id, p.name, p.price, p.manual_cost,
+      coalesce(sum(r.quantity * i.unit_cost),0) as recipe_cost
     from products p
     left join recipes r on r.product_id = p.id
     left join ingredients i on i.id = r.ingredient_id
     where p.active = true
-    group by p.id, p.name, p.price
+    group by p.id, p.name, p.price, p.manual_cost
     order by p.name`);
 
   const products = perProduct.rows.map(row => {
     const price = Number(row.price);
-    const cost = Number(row.cost);
+    const hasManualCost = row.manual_cost != null && Number(row.manual_cost) > 0;
+    const cost = hasManualCost ? Number(row.manual_cost) : Number(row.recipe_cost);
+    const costSource = hasManualCost ? "manual" : "ficha técnica";
     const cmvPercent = price > 0 ? (cost / price) * 100 : 0;
     return {
       id: row.id,
       name: row.name,
       price,
       cost: Number(cost.toFixed(2)),
+      costSource,
       cmvPercent: Number(cmvPercent.toFixed(1)),
       marginPercent: Number((100 - cmvPercent).toFixed(1))
     };
@@ -72,11 +75,12 @@ router.get("/cmv", async (_, res) => {
 
   const overallQuery = await pool.query(`
     select
-      coalesce(sum(oi.quantity * rc.unit_cost),0) as total_cost,
+      coalesce(sum(oi.quantity * coalesce(nullif(p.manual_cost,0), rc.unit_cost, 0)),0) as total_cost,
       coalesce(sum(oi.subtotal),0) as total_revenue
     from order_items oi
     join orders o on o.id = oi.order_id
-    join (
+    join products p on p.id = oi.product_id
+    left join (
       select r.product_id, sum(r.quantity * i.unit_cost) as unit_cost
       from recipes r join ingredients i on i.id = r.ingredient_id
       group by r.product_id
