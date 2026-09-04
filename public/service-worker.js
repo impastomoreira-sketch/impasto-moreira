@@ -1,4 +1,4 @@
-const CACHE = "impasto-moreira-v2";
+const CACHE = "impasto-moreira-v3";
 const SHELL = ["/assets/style.css", "/assets/logo.png", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
@@ -24,8 +24,21 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Arquivos estáticos (css, imagens, manifest): cache primeiro, com fallback pra rede.
+  // Arquivos estáticos (css, imagens, manifest): responde com o cache na hora
+  // (rápido), mas já busca a versão nova em segundo plano e atualiza o cache
+  // pra próxima visita. Assim, mesmo sem trocar o nome do CACHE a cada deploy,
+  // o cliente se autoatualiza sozinho em no máximo uma visita extra.
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request).catch(() => cached))
+    caches.open(CACHE).then((cache) =>
+      cache.match(event.request).then((cached) => {
+        const network = fetch(event.request)
+          .then((response) => {
+            if (response && response.ok) cache.put(event.request, response.clone());
+            return response;
+          })
+          .catch(() => cached);
+        return cached || network;
+      })
+    )
   );
 });
