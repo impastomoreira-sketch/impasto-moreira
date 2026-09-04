@@ -96,6 +96,15 @@ label{font-size:.85rem;font-weight:600;color:var(--muted)}
 .drawer.open{transform:translateX(0)}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:.25s;z-index:55}
 .overlay.open{opacity:1;pointer-events:auto}
+
+/* ---------- Fidelidade: badge, gaveta e roleta ---------- */
+#coinBadge{font-weight:700}
+.wheel-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-45%) scale(.92);width:min(380px,92vw);max-height:88vh;overflow:auto;background:var(--bg-elevated);border:1px solid var(--border);border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.5);padding:26px;z-index:65;opacity:0;pointer-events:none;transition:.25s}
+.wheel-modal.open{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+.wheel-wrap{position:relative;width:260px;height:260px;margin:10px auto}
+.wheel-disc{width:260px;height:260px;border-radius:50%;border:5px solid var(--gold);position:relative;transform:rotate(0deg);box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.wheel-pointer{position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:1.6rem;color:var(--gold-light);z-index:2;text-shadow:0 2px 6px rgba(0,0,0,.5)}
+.wheel-label{position:absolute;top:50%;left:50%;width:100px;margin-left:-50px;text-align:center;font-size:.68rem;font-weight:700;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.6);line-height:1.15;pointer-events:none}
 .cart-line{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:10px}
 .cart-line .name{font-size:.9rem}
 .cart-total{display:flex;justify-content:space-between;font-size:1.1rem;font-weight:700;color:var(--gold-light);margin:14px 0}
