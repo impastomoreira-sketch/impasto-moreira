@@ -48,7 +48,7 @@ router.patch("/:id/status", requireRole("admin", "atendimento", "cozinha"), asyn
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const cur = await client.query("select status from orders where id=$1 for update", [req.params.id]);
+    const cur = await client.query("select status,customer_id from orders where id=$1 for update", [req.params.id]);
     if (!cur.rows[0]) throw new Error("Pedido não encontrado");
 
     // Ao iniciar o preparo, dá baixa no estoque conforme a ficha técnica de cada item
@@ -70,6 +70,52 @@ router.patch("/:id/status", requireRole("admin", "atendimento", "cozinha"), asyn
              values($1,'Saída',$2,$3,$4)`,
             [r.ingredient_id, used, `Baixa automática - pedido #${req.params.id}`, req.params.id]
           );
+        }
+      }
+    }
+
+    // Ao marcar como Entregue, credita moeda de fidelidade, verifica bônus de
+    // giro (1º pedido / a cada N pedidos) e recompensa quem indicou este cliente
+    if (status === "Entregue" && cur.rows[0].status !== "Entregue" && cur.rows[0].customer_id) {
+      const customerId = cur.rows[0].customer_id;
+      const settingsQ = await client.query("select * from loyalty_settings where id=1");
+      const settings = settingsQ.rows[0] || { coin_expiry_days: 15, bonus_spin_every_orders: 10, referral_coin_amount: 3 };
+      const expiresAt = new Date(Date.now() + settings.coin_expiry_days * 86400000);
+
+      await client.query(
+        "insert into loyalty_coins(customer_id,amount,reason,order_id,expires_at) values($1,1,'pedido',$2,$3)",
+        [customerId, req.params.id, expiresAt]
+      );
+
+      const updCount = await client.query(
+        "update customers set completed_orders_count=completed_orders_count+1 where id=$1 returning completed_orders_count",
+        [customerId]
+      );
+      const newCount = updCount.rows[0].completed_orders_count;
+
+      if (newCount === 1) {
+        await client.query(
+          "insert into spin_credits(customer_id,reason) values($1,'primeiro_pedido')",
+          [customerId]
+        );
+      } else if (settings.bonus_spin_every_orders && newCount % settings.bonus_spin_every_orders === 0) {
+        await client.query(
+          "insert into spin_credits(customer_id,reason) values($1,'a_cada_10_pedidos')",
+          [customerId]
+        );
+      }
+
+      if (newCount === 1) {
+        const ref = await client.query(
+          "select id, referrer_customer_id from referrals where referred_customer_id=$1 and rewarded=false",
+          [customerId]
+        );
+        if (ref.rows[0]) {
+          await client.query(
+            "insert into loyalty_coins(customer_id,amount,reason,expires_at) values($1,$2,'indicacao',$3)",
+            [ref.rows[0].referrer_customer_id, settings.referral_coin_amount, expiresAt]
+          );
+          await client.query("update referrals set rewarded=true where id=$1", [ref.rows[0].id]);
         }
       }
     }
