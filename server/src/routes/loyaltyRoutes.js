@@ -51,6 +51,15 @@ async function getOrCreateReferralCode(customerId) {
   return code;
 }
 
+// Lista os prêmios ativos, na ordem configurada — usado pra desenhar a roleta
+router.get("/prizes", async (_, res) => {
+  if (!pool) return res.json([]);
+  const { rows } = await pool.query(
+    "select label from spin_prizes where active=true order by sort_order"
+  );
+  res.json(rows.map(r => r.label));
+});
+
 // Status do cliente: saldo de moedas, giros disponíveis, sequência de check-in
 router.get("/status", async (req, res) => {
   if (!pool) return res.json({ coins: 0, spinsAvailable: 0, streak: 0, referralCode: null });
