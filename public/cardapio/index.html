@@ -18,6 +18,7 @@
   <nav class="brand-nav">
     <a id="instagramLink" href="#" target="_blank" rel="noopener" style="display:none">📷 Instagram</a>
     <button onclick="openMyOrders()">📦 Meus pedidos</button>
+    <button onclick="openLoyalty()">🪙 <span id="coinBadge">Fidelidade</span></button>
     <button id="installBtn" style="display:none" onclick="installApp()">📲 Instalar app</button>
     <a href="/admin">Área administrativa</a>
   </nav>
@@ -25,6 +26,12 @@
 
 <div class="overlay" id="ordersOverlay" onclick="closeMyOrders()"></div>
 <div class="drawer" id="ordersDrawer"></div>
+
+<div class="overlay" id="loyaltyOverlay" onclick="closeLoyalty()"></div>
+<div class="drawer" id="loyaltyDrawer"></div>
+
+<div class="overlay" id="wheelOverlay" onclick="closeWheel()"></div>
+<div class="wheel-modal" id="wheelModal"></div>
 
 <div class="hero">
   <div class="tag">pizza contemporânea</div>
@@ -253,6 +260,7 @@ async function submitOrder(viaWhatsApp){
   const payload = {
     customer, phone, orderType, paymentMethod, notes, address, tableNumber,
     couponCode: appliedCoupon ? appliedCoupon.code : null,
+    referralCode: localStorage.im_referral || null,
     items: cart.map(i=>({productId:i.productId,quantity:i.quantity}))
   };
   const r = await fetch('/api/public/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -261,6 +269,9 @@ async function submitOrder(viaWhatsApp){
   lastOrder = x;
   saveMyOrder(x.orderId);
   appliedCoupon = null;
+  localStorage.im_phone = phone;
+  localStorage.im_name = customer;
+  localStorage.removeItem('im_referral');
 
   if(viaWhatsApp && settings.whatsappNumber){
     const lines = [
@@ -347,6 +358,212 @@ async function loadSettings(){
   }catch{}
 }
 
+/* ---------- Fidelidade: moedas, check-in diário e roleta ---------- */
+let loyaltyStatus = null;
+
+(function captureReferral(){
+  const ref = new URLSearchParams(location.search).get('ref');
+  if(ref) localStorage.im_referral = ref.toUpperCase().trim();
+})();
+
+async function refreshLoyaltyBadge(){
+  const phone = localStorage.im_phone;
+  const badge = document.querySelector('#coinBadge');
+  if(!phone){ badge.textContent = 'Fidelidade'; return; }
+  try{
+    loyaltyStatus = await fetch('/api/public/loyalty/status?phone='+encodeURIComponent(phone)).then(r=>r.json());
+    badge.textContent = loyaltyStatus.coins + (loyaltyStatus.spinsAvailable > 0 ? ' 🎡' : '');
+  }catch{ badge.textContent = 'Fidelidade'; }
+}
+
+function openLoyalty(){
+  document.querySelector('#loyaltyOverlay').classList.add('open');
+  document.querySelector('#loyaltyDrawer').classList.add('open');
+  renderLoyaltyDrawer();
+}
+function closeLoyalty(){
+  document.querySelector('#loyaltyOverlay').classList.remove('open');
+  document.querySelector('#loyaltyDrawer').classList.remove('open');
+}
+
+async function renderLoyaltyDrawer(){
+  const d = document.querySelector('#loyaltyDrawer');
+  const phone = localStorage.im_phone;
+
+  if(!phone){
+    d.innerHTML = `
+      <h2 style="color:var(--gold-light)">Fidelidade</h2>
+      <p class="muted">Informe seu nome e telefone (o mesmo que você usa nos pedidos) pra ver suas moedas.</p>
+      <label>Nome</label><input id="lyName" placeholder="Seu nome">
+      <label>Telefone</label><input id="lyPhone" placeholder="(00) 00000-0000">
+      <button class="btn block" onclick="identifyLoyalty()">Ver minhas moedas</button>
+    `;
+    return;
+  }
+
+  d.innerHTML = `<h2 style="color:var(--gold-light)">Fidelidade</h2><p class="muted">Carregando...</p>`;
+  try{
+    loyaltyStatus = await fetch('/api/public/loyalty/status?phone='+encodeURIComponent(phone)).then(r=>r.json());
+  }catch{
+    d.innerHTML = `<h2 style="color:var(--gold-light)">Fidelidade</h2><p class="muted">Não foi possível carregar agora. Tente de novo mais tarde.</p>`;
+    return;
+  }
+
+  const s = loyaltyStatus;
+  const shareLink = location.origin + location.pathname + '?ref=' + (s.referralCode || '');
+
+  d.innerHTML = `
+    <h2 style="color:var(--gold-light)">Fidelidade</h2>
+    <div class="cart-total" style="margin-top:0"><span>Suas moedas</span><span>🪙 ${s.coins}</span></div>
+
+    <div style="margin:16px 0;padding:14px;border:1px solid var(--border);border-radius:10px">
+      ${s.checkedInToday
+        ? `<p class="muted" style="margin:0">✅ Você já fez o check-in de hoje. Sequência: ${s.streak} dia(s). Volte amanhã!</p>`
+        : `<p class="muted" style="margin:0 0 10px">Faça check-in todo dia e ganhe moedas — a cada 7 dias seguidos, um giro bônus na roleta!</p>
+           <button class="btn block" onclick="doCheckin()">Fazer check-in de hoje</button>`}
+    </div>
+
+    ${s.spinsAvailable > 0 ? `
+      <div style="margin:16px 0;padding:14px;background:var(--bg-elevated);border-radius:10px;text-align:center">
+        <p style="margin:0 0 10px;color:var(--gold-light);font-weight:600">🎉 Você tem ${s.spinsAvailable} giro(s) na roleta!</p>
+        <button class="btn block" onclick="closeLoyalty();openWheel()">Girar a roleta</button>
+      </div>
+    ` : ''}
+
+    <div style="margin-top:20px">
+      <label>Indique um amigo</label>
+      <p class="muted" style="margin:0 0 8px">Cada amigo que pedir pela primeira vez usando seu link te dá moedas extras.</p>
+      <input readonly value="${shareLink}" onclick="this.select()">
+      <button class="btn secondary block" onclick="copyReferralLink('${shareLink}')">Copiar link de indicação</button>
+    </div>
+
+    <button class="btn secondary block" style="margin-top:20px" onclick="forgetLoyaltyPhone()">Não sou eu / trocar telefone</button>
+  `;
+}
+
+function identifyLoyalty(){
+  const name = document.querySelector('#lyName').value.trim();
+  const phone = document.querySelector('#lyPhone').value.trim();
+  if(!name || !phone) return alert('Preencha nome e telefone.');
+  localStorage.im_name = name;
+  localStorage.im_phone = phone;
+  renderLoyaltyDrawer();
+  refreshLoyaltyBadge();
+}
+
+function forgetLoyaltyPhone(){
+  localStorage.removeItem('im_phone');
+  localStorage.removeItem('im_name');
+  renderLoyaltyDrawer();
+  refreshLoyaltyBadge();
+}
+
+function copyReferralLink(link){
+  navigator.clipboard?.writeText(link).then(()=>alert('Link copiado!')).catch(()=>{});
+}
+
+async function doCheckin(){
+  const phone = localStorage.im_phone, name = localStorage.im_name;
+  try{
+    const r = await fetch('/api/public/loyalty/checkin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,name})});
+    const x = await r.json();
+    if(!r.ok) return alert(x.error || 'Não foi possível fazer o check-in.');
+    alert(`+${x.coinsAwarded} moeda(s)! Sequência: ${x.streak} dia(s)${x.bonusSpin ? ' — giro bônus liberado! 🎉' : ''}`);
+    renderLoyaltyDrawer();
+    refreshLoyaltyBadge();
+  }catch{ alert('Não foi possível fazer o check-in agora.'); }
+}
+
+/* ---------- Roleta ---------- */
+let wheelPrizes = [];
+
+async function openWheel(){
+  document.querySelector('#wheelOverlay').classList.add('open');
+  const m = document.querySelector('#wheelModal');
+  m.classList.add('open');
+  m.innerHTML = `<p class="muted" style="text-align:center">Carregando roleta...</p>`;
+  try{
+    wheelPrizes = await fetch('/api/public/loyalty/prizes').then(r=>r.json());
+  }catch{ wheelPrizes = []; }
+  if(!wheelPrizes.length){
+    m.innerHTML = `<p class="muted" style="text-align:center">Roleta indisponível no momento.</p><button class="btn block" onclick="closeWheel()">Fechar</button>`;
+    return;
+  }
+  renderWheel();
+}
+function closeWheel(){
+  document.querySelector('#wheelOverlay').classList.remove('open');
+  document.querySelector('#wheelModal').classList.remove('open');
+}
+
+function renderWheel(){
+  const n = wheelPrizes.length;
+  const slice = 360 / n;
+  const colors = ['#c9862e','#8a3a2c','#e3b876','#4a3626'];
+  let gradParts = [];
+  wheelPrizes.forEach((p,i)=>{
+    gradParts.push(`${colors[i%colors.length]} ${i*slice}deg ${(i+1)*slice}deg`);
+  });
+  const labelsHtml = wheelPrizes.map((p,i)=>{
+    const angle = slice*i + slice/2;
+    return `<div class="wheel-label" style="transform:rotate(${angle}deg) translate(0,-108px) rotate(${-angle}deg)">${p}</div>`;
+  }).join('');
+
+  const m = document.querySelector('#wheelModal');
+  m.innerHTML = `
+    <h2 style="color:var(--gold-light);text-align:center;margin-top:0">Roleta da sorte</h2>
+    <div class="wheel-wrap">
+      <div class="wheel-pointer">▼</div>
+      <div class="wheel-disc" id="wheelDisc" style="background:conic-gradient(${gradParts.join(',')})">
+        ${labelsHtml}
+      </div>
+    </div>
+    <button class="btn block" id="spinBtn" style="margin-top:22px" onclick="doSpin()">Girar!</button>
+    <div id="wheelResult"></div>
+  `;
+}
+
+async function doSpin(){
+  const phone = localStorage.im_phone;
+  document.querySelector('#spinBtn').disabled = true;
+  document.querySelector('#spinBtn').textContent = 'Girando...';
+  let result;
+  try{
+    const r = await fetch('/api/public/loyalty/spin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone})});
+    result = await r.json();
+    if(!r.ok) throw new Error(result.error || 'Não foi possível girar agora.');
+  }catch(e){
+    alert(e.message);
+    document.querySelector('#spinBtn').disabled = false;
+    document.querySelector('#spinBtn').textContent = 'Girar!';
+    return;
+  }
+
+  const n = wheelPrizes.length;
+  const slice = 360 / n;
+  let idx = wheelPrizes.indexOf(result.prize);
+  if(idx < 0) idx = 0;
+  const targetAngle = 360 - (idx*slice + slice/2); // gira até o prêmio parar sob o ponteiro (topo)
+  const spins = 5 * 360;
+  const disc = document.querySelector('#wheelDisc');
+  disc.style.transition = 'transform 4s cubic-bezier(.17,.67,.32,1.02)';
+  disc.style.transform = `rotate(${spins + targetAngle}deg)`;
+
+  setTimeout(()=>{
+    document.querySelector('#wheelResult').innerHTML = `
+      <div style="margin-top:18px;padding:16px;background:var(--bg-elevated);border-radius:10px;text-align:center">
+        <p style="margin:0 0 6px;font-size:1.1rem;color:var(--gold-light);font-weight:700">🎉 ${result.prize}</p>
+        ${result.couponCode
+          ? `<p class="muted" style="margin:0 0 10px">Use o cupom no seu próximo pedido:</p>
+             <input readonly value="${result.couponCode}" onclick="this.select()" style="text-align:center;font-weight:700">`
+          : `<p class="muted" style="margin:0">Não foi dessa vez — continue pedindo pra ganhar mais giros!</p>`}
+        <button class="btn secondary block" style="margin-top:10px" onclick="closeWheel()">Fechar</button>
+      </div>
+    `;
+    refreshLoyaltyBadge();
+  }, 4200);
+}
+
 if('serviceWorker' in navigator){
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/service-worker.js').then(reg => {
@@ -374,6 +591,7 @@ function installApp(){
 renderCartCount();
 loadSettings();
 loadMenu();
+refreshLoyaltyBadge();
 </script>
 </body>
 </html>
