@@ -78,15 +78,20 @@ async function loadMenu(){
     app.innerHTML = '<div class="card">Cardápio ainda não configurado. Volte em breve.</div>';
     return;
   }
-  app.innerHTML = categories.map(cat => `
-    <h2 class="category-title">${cat}</h2>
+  app.innerHTML = categories.map(cat => {
+    const items = menu.filter(p=>p.category===cat);
+    return `
+    <h2 class="category-title"><span class="cat-name">${cat}</span><span class="cat-count">${items.length} ${items.length===1?'opção':'opções'}</span></h2>
     <div class="grid">
-      ${menu.filter(p=>p.category===cat).map(p => {
+      ${items.map(p => {
         const onPromo = p.promoActive && p.promoPrice != null && p.promoPrice < p.price;
         return `
         <div class="card product-card">
-          ${p.image_url ? `<img class="product-img" src="${p.image_url}" alt="${p.name}">` : ''}
-          ${onPromo ? `<span class="promo-tag">Promoção</span>` : ''}
+          ${p.image_url ? `
+          <div class="product-img-wrap">
+            <img class="product-img" src="${p.image_url}" alt="${p.name}">
+            ${onPromo ? `<span class="promo-tag">Promoção</span>` : ''}
+          </div>` : (onPromo ? `<span class="promo-tag no-img">Promoção</span>` : '')}
           <h3>${p.name}</h3>
           <p>${p.description||''}</p>
           <div class="price">
@@ -101,7 +106,7 @@ async function loadMenu(){
         </div>
       `}).join('')}
     </div>
-  `).join('');
+  `}).join('');
 }
 
 let pendingQty = {};
