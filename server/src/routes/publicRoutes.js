@@ -68,7 +68,7 @@ router.post("/coupons/validate", async (req, res) => {
 
 router.post("/orders", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
-  const { customer, phone, orderType, address, paymentMethod, items, notes, couponCode, tableNumber } = req.body || {};
+  const { customer, phone, orderType, address, paymentMethod, items, notes, couponCode, tableNumber, referralCode } = req.body || {};
 
   if (!customer || !phone) return res.status(400).json({ error: "Informe nome e telefone" });
   if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: "Carrinho vazio" });
@@ -84,12 +84,30 @@ router.post("/orders", async (req, res) => {
   try {
     await client.query("begin");
 
+    // "xmax = 0" indica que a linha acabou de ser inserida agora (cliente novo),
+    // e não uma atualização de um cliente que já existia — usado para só
+    // vincular o código de indicação na primeira vez que esse cliente aparece.
     const c = await client.query(
       `insert into customers(name,phone) values($1,$2)
-       on conflict (name,phone) do update set name=excluded.name returning id`,
+       on conflict (name,phone) do update set name=excluded.name
+       returning id, (xmax = 0) as is_new`,
       [customer.trim(), phone.trim()]
     );
     const customerId = c.rows[0].id;
+    const isNewCustomer = c.rows[0].is_new;
+
+    if (isNewCustomer && referralCode) {
+      const referrer = await client.query(
+        "select id from customers where referral_code=$1",
+        [String(referralCode).toUpperCase().trim()]
+      );
+      if (referrer.rows[0] && referrer.rows[0].id !== customerId) {
+        await client.query(
+          "insert into referrals(referrer_customer_id,referred_customer_id,referred_phone) values($1,$2,$3)",
+          [referrer.rows[0].id, customerId, phone.trim()]
+        );
+      }
+    }
 
     let addressId = null;
     if (orderType === "Delivery") {
