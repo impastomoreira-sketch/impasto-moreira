@@ -466,7 +466,7 @@ async function renderStock(){
       <button class="btn block" onclick="createIngredient()">Adicionar</button>
     </div>
     <table style="margin-top:16px">
-      <thead><tr><th>Ingrediente</th><th>Unidade</th><th>Estoque</th><th>Mínimo</th><th>Custo</th><th>Movimentar</th><th></th></tr></thead>
+      <thead><tr><th>Ingrediente</th><th>Unidade</th><th>Estoque</th><th>Mínimo</th><th>Custo/g (ou /un)</th><th>Calcular pelo que você pagou</th><th>Movimentar</th><th></th></tr></thead>
       <tbody>
         ${ingredients.map(i => `
           <tr ${i.stock_qty<=i.min_qty?'style="background:#fdecea"':''}>
@@ -474,7 +474,12 @@ async function renderStock(){
             <td><input value="${i.unit}" style="margin:0;width:60px" onchange="updateIngredient(${i.id},{unit:this.value})"></td>
             <td>${i.stock_qty} ${i.unit}</td>
             <td><input value="${i.min_qty}" type="number" step="0.001" style="margin:0;width:70px" onchange="updateIngredient(${i.id},{minQty:Number(this.value)})"></td>
-            <td><input value="${i.unit_cost}" type="number" step="0.01" style="margin:0;width:80px" onchange="updateIngredient(${i.id},{unitCost:Number(this.value)})"></td>
+            <td><input value="${i.unit_cost}" type="number" step="0.0001" style="margin:0;width:90px" onchange="updateIngredient(${i.id},{unitCost:Number(this.value)})"></td>
+            <td>
+              <input id="pkgQty-${i.id}" type="number" step="1" placeholder="qtd. embalagem (${i.unit})" style="width:120px;display:inline-block;margin:0 4px;font-size:.8rem">
+              <input id="pkgPrice-${i.id}" type="number" step="0.01" placeholder="R$ pago" style="width:80px;display:inline-block;margin:0 4px;font-size:.8rem">
+              <button class="btn secondary" style="padding:6px 10px;font-size:.8rem" onclick="calcUnitCost(${i.id})">Calcular</button>
+            </td>
             <td>
               <select id="mtype-${i.id}" style="width:auto;display:inline-block;margin:0 6px">
                 <option>Entrada</option><option>Saída</option><option>Ajuste</option>
@@ -502,7 +507,15 @@ async function createIngredient(){
   }catch(e){ alert(e.message); }
 }
 async function updateIngredient(id, patch){
-  try{ await api('/admin/stock/'+id,{method:'PATCH',body:JSON.stringify(patch)}); }
+  try{ await api('/admin/stock/'+id,{method:'PATCH',body:JSON.stringify(patch)}); go('stock'); }
+  catch(e){ alert(e.message); }
+}
+async function calcUnitCost(id){
+  const qty = Number(document.querySelector('#pkgQty-'+id).value);
+  const price = Number(document.querySelector('#pkgPrice-'+id).value);
+  if(!qty || !price) return alert('Informe a quantidade da embalagem e quanto você pagou por ela');
+  const unitCost = price / qty;
+  try{ await api('/admin/stock/'+id,{method:'PATCH',body:JSON.stringify({unitCost})}); go('stock'); }
   catch(e){ alert(e.message); }
 }
 async function deleteIngredient(id){
