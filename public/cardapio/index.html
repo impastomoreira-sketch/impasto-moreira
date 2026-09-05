@@ -183,6 +183,7 @@ async function renderCart(){
         ${paymentMethods.map(pm=>`<option>${pm}</option>`).join('')}
       </select>
       <label>Observações</label><textarea id="fNotes" rows="2" placeholder="Ex: sem cebola, troco para R$100..."></textarea>
+      <div id="coinUseBox"></div>
       <label>Cupom de desconto</label>
       <div style="display:flex;gap:6px">
         <input id="fCoupon" placeholder="ex: PIZZA10" style="flex:1;text-transform:uppercase" value="${appliedCoupon?appliedCoupon.code:''}">
@@ -190,7 +191,7 @@ async function renderCart(){
       </div>
       <p class="muted" id="couponInfo">${appliedCoupon ? `Cupom ${appliedCoupon.code} aplicado: -${money(appliedCoupon.discountAmount)}` : ''}</p>
       <div class="cart-total"><span>Subtotal</span><span>${money(cartSubtotal())}</span></div>
-      ${appliedCoupon ? `<div class="cart-total" style="color:#8fe0a0"><span>Desconto</span><span>-${money(appliedCoupon.discountAmount)}</span></div>` : ''}
+      <div id="discountLine">${appliedCoupon ? `<div class="cart-total" style="color:#8fe0a0"><span>Desconto</span><span>-${money(appliedCoupon.discountAmount)}</span></div>` : ''}</div>
       <div class="cart-total" id="feeLine"><span>Taxa de entrega</span><span>${money(deliveryFee)}</span></div>
       <div class="cart-total" style="border-top:1px solid var(--border);padding-top:10px"><span>Total</span><span id="totalLine">${money(cartTotal())}</span></div>
       <button class="btn block" onclick="submitOrder()">Confirmar pedido</button>
@@ -199,6 +200,15 @@ async function renderCart(){
     `;
     if(tableFromUrl && orderType!=='Mesa') setOrderType('Mesa');
     else if(orderType==='Mesa'){ document.querySelector('#tabTable').classList.add('active'); document.querySelector('#tabDelivery').classList.remove('active'); document.querySelector('#addressFields').style.display='none'; document.querySelector('#tableField').style.display='block'; }
+
+    // Se o cliente ganhou um cupom (roleta ou resgate de moedas) e ainda não usou,
+    // já preenche e aplica sozinho assim que ele chega no checkout.
+    if(localStorage.im_pending_coupon){
+      document.querySelector('#fCoupon').value = localStorage.im_pending_coupon;
+      localStorage.removeItem('im_pending_coupon');
+      applyCoupon();
+    }
+    renderCoinUseBox();
   } else if(step==="confirmacao"){
     d.innerHTML = `
       <h2 style="color:var(--gold-light)">Pedido enviado! 🎉</h2>
@@ -235,6 +245,37 @@ async function applyCoupon(){
   updateTotals();
 }
 
+async function renderCoinUseBox(){
+  const box = document.querySelector('#coinUseBox');
+  if(!box) return;
+  const phone = localStorage.im_phone;
+  if(!phone || appliedCoupon){ box.innerHTML = ''; return; }
+  try{
+    const s = await fetch('/api/public/loyalty/status?phone='+encodeURIComponent(phone)).then(r=>r.json());
+    if(!s.coins || s.coins < 1){ box.innerHTML = ''; return; }
+    box.innerHTML = `
+      <div style="margin:0 0 16px;padding:12px 14px;background:var(--bg-elevated);border-radius:10px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <span>🪙 Você tem ${s.coins} moeda(s) = ${money(s.coins*s.coinValue)}</span>
+        <button class="btn secondary" style="white-space:nowrap;padding:8px 14px" onclick="useCoinsAtCheckout(${s.coins},${s.coinValue})">Usar agora</button>
+      </div>
+    `;
+  }catch{ box.innerHTML = ''; }
+}
+
+async function useCoinsAtCheckout(maxCoins, coinValue){
+  const phone = localStorage.im_phone;
+  try{
+    const r = await fetch('/api/public/loyalty/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,coins:maxCoins})});
+    const x = await r.json();
+    if(!r.ok) return alert(x.error || 'Não foi possível usar as moedas agora.');
+    appliedCoupon = { code: x.couponCode, discountAmount: x.discountValue };
+    document.querySelector('#fCoupon').value = x.couponCode;
+    document.querySelector('#couponInfo').textContent = `✅ ${maxCoins} moeda(s) trocadas: -${money(x.discountValue)}`;
+    document.querySelector('#coinUseBox').innerHTML = '';
+    updateTotals();
+  }catch{ alert('Não foi possível usar as moedas agora.'); }
+}
+
 async function lookupFee(){
   const n = document.querySelector('#fNeighborhood').value;
   if(!n) return;
@@ -245,6 +286,8 @@ async function lookupFee(){
 function updateTotals(){
   document.querySelector('#feeLine').innerHTML = `<span>Taxa de entrega</span><span>${money(deliveryFee)}</span>`;
   document.querySelector('#totalLine').textContent = money(cartTotal());
+  const dl = document.querySelector('#discountLine');
+  if(dl) dl.innerHTML = appliedCoupon ? `<div class="cart-total" style="color:#8fe0a0"><span>Desconto</span><span>-${money(appliedCoupon.discountAmount)}</span></div>` : '';
 }
 
 async function submitOrder(viaWhatsApp){
@@ -398,8 +441,7 @@ async function renderLoyaltyDrawer(){
   if(!phone){
     d.innerHTML = `
       <h2 style="color:var(--gold-light)">Fidelidade</h2>
-      <p class="muted">Informe seu nome e telefone (o mesmo que você usa nos pedidos) pra ver suas moedas.</p>
-      <label>Nome</label><input id="lyName" placeholder="Seu nome">
+      <p class="muted">Informe o telefone que você usa nos pedidos pra ver suas moedas. É preciso já ter feito ao menos um pedido.</p>
       <label>Telefone</label><input id="lyPhone" placeholder="(00) 00000-0000">
       <button class="btn block" onclick="identifyLoyalty()">Ver minhas moedas</button>
     `;
@@ -435,6 +477,17 @@ async function renderLoyaltyDrawer(){
       </div>
     ` : ''}
 
+    ${s.coins > 0 ? `
+      <div style="margin:16px 0;padding:14px;border:1px solid var(--border);border-radius:10px">
+        <label style="margin:0">Trocar moedas por desconto</label>
+        <p class="muted" style="margin:4px 0 10px">Cada moeda vale ${money(s.coinValue)}. Você tem ${s.coins} moeda(s) = ${money(s.coins*s.coinValue)}.</p>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input id="redeemQty" type="number" min="1" max="${s.coins}" value="${s.coins}" style="flex:1;margin:0">
+          <button class="btn" style="white-space:nowrap" onclick="doRedeem(${s.coins},${s.coinValue})">Trocar</button>
+        </div>
+      </div>
+    ` : ''}
+
     <div style="margin-top:20px">
       <label>Indique um amigo</label>
       <p class="muted" style="margin:0 0 8px">Cada amigo que pedir pela primeira vez usando seu link te dá moedas extras.</p>
@@ -447,10 +500,8 @@ async function renderLoyaltyDrawer(){
 }
 
 function identifyLoyalty(){
-  const name = document.querySelector('#lyName').value.trim();
   const phone = document.querySelector('#lyPhone').value.trim();
-  if(!name || !phone) return alert('Preencha nome e telefone.');
-  localStorage.im_name = name;
+  if(!phone) return alert('Informe o telefone.');
   localStorage.im_phone = phone;
   renderLoyaltyDrawer();
   refreshLoyaltyBadge();
@@ -467,10 +518,32 @@ function copyReferralLink(link){
   navigator.clipboard?.writeText(link).then(()=>alert('Link copiado!')).catch(()=>{});
 }
 
-async function doCheckin(){
-  const phone = localStorage.im_phone, name = localStorage.im_name;
+async function doRedeem(maxCoins, coinValue){
+  const phone = localStorage.im_phone;
+  const qty = parseInt(document.querySelector('#redeemQty').value, 10);
+  if(!qty || qty < 1) return alert('Informe quantas moedas quer trocar.');
+  if(qty > maxCoins) return alert('Você não tem moedas suficientes.');
   try{
-    const r = await fetch('/api/public/loyalty/checkin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,name})});
+    const r = await fetch('/api/public/loyalty/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,coins:qty})});
+    const x = await r.json();
+    if(!r.ok) return alert(x.error || 'Não foi possível trocar agora.');
+    refreshLoyaltyBadge();
+    document.querySelector('#loyaltyDrawer').innerHTML = `
+      <h2 style="color:var(--gold-light)">Fidelidade</h2>
+      <div style="margin:16px 0;padding:16px;background:var(--bg-elevated);border-radius:10px;text-align:center">
+        <p style="margin:0 0 6px;font-size:1.1rem;color:var(--gold-light);font-weight:700">🎉 Cupom gerado!</p>
+        <p class="muted" style="margin:0 0 14px">${qty} moeda(s) trocadas por ${money(x.discountValue)} de desconto.</p>
+        <button class="btn block" onclick="useCouponNow('${x.couponCode}')">Usar agora no meu pedido</button>
+        <button class="btn secondary block" style="margin-top:8px" onclick="closeLoyalty()">Fechar</button>
+      </div>
+    `;
+  }catch{ alert('Não foi possível trocar agora.'); }
+}
+
+async function doCheckin(){
+  const phone = localStorage.im_phone;
+  try{
+    const r = await fetch('/api/public/loyalty/checkin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone})});
     const x = await r.json();
     if(!r.ok) return alert(x.error || 'Não foi possível fazer o check-in.');
     alert(`+${x.coinsAwarded} moeda(s)! Sequência: ${x.streak} dia(s)${x.bonusSpin ? ' — giro bônus liberado! 🎉' : ''}`);
@@ -481,6 +554,7 @@ async function doCheckin(){
 
 /* ---------- Roleta ---------- */
 let wheelPrizes = [];
+let wheelRotation = 0;
 
 async function openWheel(){
   document.querySelector('#wheelOverlay').classList.add('open');
@@ -494,11 +568,24 @@ async function openWheel(){
     m.innerHTML = `<p class="muted" style="text-align:center">Roleta indisponível no momento.</p><button class="btn block" onclick="closeWheel()">Fechar</button>`;
     return;
   }
+  wheelRotation = 0;
   renderWheel();
 }
 function closeWheel(){
   document.querySelector('#wheelOverlay').classList.remove('open');
   document.querySelector('#wheelModal').classList.remove('open');
+}
+
+function useCouponNow(code){
+  localStorage.im_pending_coupon = code;
+  closeWheel();
+  closeLoyalty();
+  if(!cart.length){
+    alert('Adicione algo ao carrinho primeiro — o cupom já vai estar aplicado quando você for ao checkout.');
+    return;
+  }
+  step = 'entrega';
+  openCart();
 }
 
 function renderWheel(){
@@ -532,6 +619,7 @@ async function doSpin(){
   const phone = localStorage.im_phone;
   document.querySelector('#spinBtn').disabled = true;
   document.querySelector('#spinBtn').textContent = 'Girando...';
+  document.querySelector('#wheelResult').innerHTML = '';
   let result;
   try{
     const r = await fetch('/api/public/loyalty/spin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone})});
@@ -548,23 +636,38 @@ async function doSpin(){
   const slice = 360 / n;
   let idx = wheelPrizes.indexOf(result.prize);
   if(idx < 0) idx = 0;
-  const targetAngle = 360 - (idx*slice + slice/2); // gira até o prêmio parar sob o ponteiro (topo)
-  const spins = 5 * 360;
+  const targetAngle = 360 - (idx*slice + slice/2); // ângulo absoluto onde o prêmio fica sob o ponteiro
+  const currentMod = ((wheelRotation % 360) + 360) % 360;
+  const forwardDelta = ((targetAngle - currentMod) + 360) % 360;
+  wheelRotation += 5*360 + forwardDelta; // sempre gira pra frente, nunca "volta"
+
   const disc = document.querySelector('#wheelDisc');
   disc.style.transition = 'transform 4s cubic-bezier(.17,.67,.32,1.02)';
-  disc.style.transform = `rotate(${spins + targetAngle}deg)`;
+  disc.style.transform = `rotate(${wheelRotation}deg)`;
 
-  setTimeout(()=>{
+  setTimeout(async ()=>{
+    let spinsLeft = 0;
+    try{
+      const st = await fetch('/api/public/loyalty/status?phone='+encodeURIComponent(phone)).then(r=>r.json());
+      spinsLeft = st.spinsAvailable || 0;
+    }catch{}
+
     document.querySelector('#wheelResult').innerHTML = `
       <div style="margin-top:18px;padding:16px;background:var(--bg-elevated);border-radius:10px;text-align:center">
         <p style="margin:0 0 6px;font-size:1.1rem;color:var(--gold-light);font-weight:700">🎉 ${result.prize}</p>
         ${result.couponCode
-          ? `<p class="muted" style="margin:0 0 10px">Use o cupom no seu próximo pedido:</p>
-             <input readonly value="${result.couponCode}" onclick="this.select()" style="text-align:center;font-weight:700">`
+          ? `<p class="muted" style="margin:0 0 10px">Cupom gerado: <b>${result.couponCode}</b></p>
+             <button class="btn block" onclick="useCouponNow('${result.couponCode}')">Usar agora no meu pedido</button>`
           : `<p class="muted" style="margin:0">Não foi dessa vez — continue pedindo pra ganhar mais giros!</p>`}
+        ${spinsLeft > 0
+          ? `<p style="margin:14px 0 8px;color:var(--gold-light);font-weight:600">Você ainda tem ${spinsLeft} giro(s)!</p>
+             <button class="btn block" onclick="doSpin()">Girar de novo</button>`
+          : ''}
         <button class="btn secondary block" style="margin-top:10px" onclick="closeWheel()">Fechar</button>
       </div>
     `;
+    document.querySelector('#spinBtn').disabled = false;
+    document.querySelector('#spinBtn').textContent = 'Girar!';
     refreshLoyaltyBadge();
   }, 4200);
 }
