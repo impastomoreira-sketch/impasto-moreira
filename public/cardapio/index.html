@@ -18,7 +18,7 @@
   <nav class="brand-nav">
     <a id="instagramLink" href="#" target="_blank" rel="noopener" style="display:none">📷 Instagram</a>
     <button onclick="openMyOrders()">📦 Meus pedidos</button>
-    <button onclick="openLoyalty()">🪙 <span id="coinBadge">Fidelidade</span></button>
+    <button onclick="openLoyalty()">🪙 Fidelidade<span id="coinBadge"></span></button>
     <button id="installBtn" style="display:none" onclick="installApp()">📲 Instalar app</button>
   </nav>
 </header>
@@ -440,11 +440,11 @@ let loyaltyStatus = null;
 async function refreshLoyaltyBadge(){
   const phone = localStorage.im_phone;
   const badge = document.querySelector('#coinBadge');
-  if(!phone){ badge.textContent = 'Fidelidade'; return; }
+  if(!phone){ badge.textContent = ''; return; }
   try{
     loyaltyStatus = await fetch('/api/public/loyalty/status?phone='+encodeURIComponent(phone)).then(r=>r.json());
-    badge.textContent = loyaltyStatus.coins + (loyaltyStatus.spinsAvailable > 0 ? ' 🎡' : '');
-  }catch{ badge.textContent = 'Fidelidade'; }
+    badge.textContent = ' (' + loyaltyStatus.coins + (loyaltyStatus.spinsAvailable > 0 ? ' 🎡' : '') + ')';
+  }catch{ badge.textContent = ''; }
 }
 
 function openLoyalty(){
@@ -489,7 +489,7 @@ async function renderLoyaltyDrawer(){
     <div style="margin:16px 0;padding:14px;border:1px solid var(--border);border-radius:10px">
       ${s.checkedInToday
         ? `<p class="muted" style="margin:0">✅ Você já fez o check-in de hoje. Sequência: ${s.streak} dia(s). Volte amanhã!</p>`
-        : `<p class="muted" style="margin:0 0 10px">Faça check-in todo dia e ganhe moedas — a cada 7 dias seguidos, um giro bônus na roleta!</p>
+        : `<p class="muted" style="margin:0 0 10px">Faça check-in todo dia e ganhe moedas — a sequência aumenta o valor a cada dia seguido.</p>
            <button class="btn block" onclick="doCheckin()">Fazer check-in de hoje</button>`}
     </div>
 
