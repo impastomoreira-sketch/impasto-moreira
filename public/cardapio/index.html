@@ -561,7 +561,7 @@ async function doCheckin(){
     const r = await fetch('/api/public/loyalty/checkin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone})});
     const x = await r.json();
     if(!r.ok) return alert(x.error || 'Não foi possível fazer o check-in.');
-    alert(`+${x.coinsAwarded} moeda(s)! Sequência: ${x.streak} dia(s)${x.bonusSpin ? ' — giro bônus liberado! 🎉' : ''}`);
+    alert(`+${x.coinsAwarded} moeda(s)! Sequência: ${x.streak} dia(s)`);
     renderLoyaltyDrawer();
     refreshLoyaltyBadge();
   }catch{ alert('Não foi possível fazer o check-in agora.'); }
