@@ -4,9 +4,9 @@ import { pool } from "../db.js";
 const router = Router();
 
 async function getSettings() {
-  if (!pool) return { coin_expiry_days: 15, bonus_spin_every_orders: 10, daily_checkin_coins: 1, referral_coin_amount: 3 };
+  if (!pool) return { coin_expiry_days: 15, bonus_spin_every_orders: 10, daily_checkin_coins: 1, referral_coin_amount: 3, coin_value_reais: 0.01 };
   const { rows } = await pool.query("select * from loyalty_settings where id=1");
-  return rows[0] || { coin_expiry_days: 15, bonus_spin_every_orders: 10, daily_checkin_coins: 1, referral_coin_amount: 3 };
+  return rows[0] || { coin_expiry_days: 15, bonus_spin_every_orders: 10, daily_checkin_coins: 1, referral_coin_amount: 3, coin_value_reais: 0.01 };
 }
 
 function normalizePhone(phone) {
@@ -84,13 +84,15 @@ router.get("/status", async (req, res) => {
   const todayStr = new Date().toISOString().slice(0, 10);
   const checkedInToday = lastCheckin.rows[0]?.checkin_date?.toISOString?.().slice(0, 10) === todayStr;
   const referralCode = await getOrCreateReferralCode(customer.id);
+  const settings = await getSettings();
 
   res.json({
     coins: Number(coinsQ.rows[0].total),
     spinsAvailable: Number(spinsQ.rows[0].n),
     streak: lastCheckin.rows[0]?.streak_count || 0,
     checkedInToday,
-    referralCode
+    referralCode,
+    coinValue: Number(settings.coin_value_reais ?? 0.01)
   });
 });
 
@@ -98,19 +100,25 @@ router.get("/status", async (req, res) => {
 // e um giro de bônus a cada 7 dias seguidos
 router.post("/checkin", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
-  const { phone, name } = req.body || {};
-  if (!phone || !name) return res.status(400).json({ error: "Informe nome e telefone" });
+  const { phone } = req.body || {};
+  if (!phone) return res.status(400).json({ error: "Informe o telefone" });
 
   const client = await pool.connect();
   try {
     await client.query("begin");
 
-    const c = await client.query(
-      `insert into customers(name,phone) values($1,$2)
-       on conflict (name,phone) do update set name=excluded.name returning id`,
-      [name.trim(), phone.trim()]
+    // Só libera check-in pra quem já é cliente de verdade (fez pelo menos 1
+    // pedido marcado como Entregue) — evita alguém "criar" um cliente falso
+    // só digitando um telefone qualquer pra ganhar moeda de graça.
+    const found = await client.query(
+      "select id,completed_orders_count from customers where regexp_replace(phone,'\\D','','g')=$1 order by id desc limit 1",
+      [normalizePhone(phone)]
     );
-    const customerId = c.rows[0].id;
+    if (!found.rows[0] || Number(found.rows[0].completed_orders_count) < 1) {
+      await client.query("rollback");
+      return res.status(403).json({ error: "Faça pelo menos um pedido primeiro para participar da fidelidade." });
+    }
+    const customerId = found.rows[0].id;
 
     const todayStr = new Date().toISOString().slice(0, 10);
     const already = await client.query(
@@ -207,6 +215,72 @@ router.post("/spin", async (req, res) => {
 
     await client.query("commit");
     res.json({ prize: prize.label, couponCode });
+  } catch (e) {
+    await client.query("rollback");
+    res.status(400).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Troca moedas por um cupom de desconto (valor por moeda configurável em loyalty_settings)
+router.post("/redeem", async (req, res) => {
+  if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
+  const { phone, coins } = req.body || {};
+  const requested = parseInt(coins, 10);
+  if (!phone || !requested || requested < 1) return res.status(400).json({ error: "Informe quantas moedas deseja trocar" });
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+
+    const customer = await client.query(
+      "select id from customers where regexp_replace(phone,'\\D','','g')=$1 order by id desc limit 1",
+      [normalizePhone(phone)]
+    );
+    if (!customer.rows[0]) throw new Error("Cliente não encontrado");
+    const customerId = customer.rows[0].id;
+
+    // Pega as "levas" de moeda ainda válidas, das mais antigas pras mais novas,
+    // e vai consumindo até cobrir a quantidade pedida (troco fica numa leva nova)
+    const rows = await client.query(
+      "select id,amount from loyalty_coins where customer_id=$1 and redeemed=false and expires_at>now() order by created_at for update",
+      [customerId]
+    );
+    const available = rows.rows.reduce((s, r) => s + Number(r.amount), 0);
+    if (available < requested) throw new Error(`Saldo insuficiente. Você tem ${available} moeda(s).`);
+
+    let remaining = requested;
+    for (const row of rows.rows) {
+      if (remaining <= 0) break;
+      const amt = Number(row.amount);
+      if (amt <= remaining) {
+        await client.query("update loyalty_coins set redeemed=true where id=$1", [row.id]);
+        remaining -= amt;
+      } else {
+        await client.query("update loyalty_coins set amount=amount-$1 where id=$2", [remaining, row.id]);
+        await client.query(
+          "insert into loyalty_coins(customer_id,amount,reason,expires_at,redeemed) values($1,$2,'resgate',now(),true)",
+          [customerId, remaining, new Date()]
+        );
+        remaining = 0;
+      }
+    }
+
+    const settings = await getSettings();
+    const coinValue = Number(settings.coin_value_reais ?? 0.01);
+    const discountValue = Math.round(requested * coinValue * 100) / 100;
+    const couponCode = `MOEDAS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const validUntil = new Date(Date.now() + 30 * 86400000);
+
+    await client.query(
+      `insert into coupons(code,discount_type,discount_value,min_order_value,max_uses,valid_until)
+       values($1,'fixed',$2,0,1,$3)`,
+      [couponCode, discountValue, validUntil]
+    );
+
+    await client.query("commit");
+    res.json({ couponCode, discountValue, coinsRedeemed: requested });
   } catch (e) {
     await client.query("rollback");
     res.status(400).json({ error: e.message });
