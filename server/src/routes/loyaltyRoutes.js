@@ -107,18 +107,26 @@ router.post("/checkin", async (req, res) => {
   try {
     await client.query("begin");
 
-    // Só libera check-in pra quem já é cliente de verdade (fez pelo menos 1
-    // pedido marcado como Entregue) — evita alguém "criar" um cliente falso
-    // só digitando um telefone qualquer pra ganhar moeda de graça.
-    const found = await client.query(
+    // Check-in é aberto pra qualquer visitante, mesmo quem nunca comprou —
+    // é justamente pra incentivar a pessoa a conhecer o app e voltar. Busca
+    // pelo telefone (ignorando nome) pra reaproveitar o mesmo cliente que já
+    // existe, em vez de criar um registro duplicado quando o nome varia.
+    let found = await client.query(
       "select id,completed_orders_count from customers where regexp_replace(phone,'\\D','','g')=$1 order by id desc limit 1",
       [normalizePhone(phone)]
     );
-    if (!found.rows[0] || Number(found.rows[0].completed_orders_count) < 1) {
-      await client.query("rollback");
-      return res.status(403).json({ error: "Faça pelo menos um pedido primeiro para participar da fidelidade." });
+    let customerId, completedOrders;
+    if (found.rows[0]) {
+      customerId = found.rows[0].id;
+      completedOrders = Number(found.rows[0].completed_orders_count);
+    } else {
+      const created = await client.query(
+        "insert into customers(name,phone) values('Cliente',$1) returning id,completed_orders_count",
+        [phone.trim()]
+      );
+      customerId = created.rows[0].id;
+      completedOrders = 0;
     }
-    const customerId = found.rows[0].id;
 
     const todayStr = new Date().toISOString().slice(0, 10);
     const already = await client.query(
@@ -150,17 +158,11 @@ router.post("/checkin", async (req, res) => {
       [customerId, coinsAwarded, expiresAt]
     );
 
-    let bonusSpin = false;
-    if (streak % 7 === 0) {
-      await client.query(
-        "insert into spin_credits(customer_id,reason) values($1,'checkin_streak')",
-        [customerId]
-      );
-      bonusSpin = true;
-    }
-
+    // O giro de roleta vale só pra duas situações: o 1º pedido do cliente e a
+    // cada N pedidos (ambos controlados em orderRoutes.js, quando um pedido
+    // é marcado como Entregue). O check-in diário dá só moeda, não giro.
     await client.query("commit");
-    res.json({ streak, coinsAwarded, bonusSpin });
+    res.json({ streak, coinsAwarded });
   } catch (e) {
     await client.query("rollback");
     res.status(400).json({ error: e.message });
