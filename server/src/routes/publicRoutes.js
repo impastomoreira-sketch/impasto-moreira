@@ -84,17 +84,27 @@ router.post("/orders", async (req, res) => {
   try {
     await client.query("begin");
 
-    // "xmax = 0" indica que a linha acabou de ser inserida agora (cliente novo),
-    // e não uma atualização de um cliente que já existia — usado para só
-    // vincular o código de indicação na primeira vez que esse cliente aparece.
-    const c = await client.query(
-      `insert into customers(name,phone) values($1,$2)
-       on conflict (name,phone) do update set name=excluded.name
-       returning id, (xmax = 0) as is_new`,
-      [customer.trim(), phone.trim()]
+    // Identifica o cliente pelo telefone (ignorando o nome) — evita criar um
+    // registro duplicado quando a pessoa digita o nome de um jeito um pouco
+    // diferente em pedidos diferentes (ex: "Leandro" vs "Leandro Moreira"),
+    // ou quando ela já tinha feito check-in antes de comprar pela 1ª vez.
+    const existing = await client.query(
+      "select id from customers where regexp_replace(phone,'\\D','','g')=$1 order by id desc limit 1",
+      [phone.replace(/\D/g, "")]
     );
-    const customerId = c.rows[0].id;
-    const isNewCustomer = c.rows[0].is_new;
+    let customerId, isNewCustomer;
+    if (existing.rows[0]) {
+      customerId = existing.rows[0].id;
+      isNewCustomer = false;
+      await client.query("update customers set name=$1, phone=$2 where id=$3", [customer.trim(), phone.trim(), customerId]);
+    } else {
+      const created = await client.query(
+        "insert into customers(name,phone) values($1,$2) returning id",
+        [customer.trim(), phone.trim()]
+      );
+      customerId = created.rows[0].id;
+      isNewCustomer = true;
+    }
 
     if (isNewCustomer && referralCode) {
       const referrer = await client.query(
