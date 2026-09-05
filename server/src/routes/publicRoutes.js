@@ -68,7 +68,7 @@ router.post("/coupons/validate", async (req, res) => {
 
 router.post("/orders", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
-  const { customer, phone, orderType, address, paymentMethod, items, notes, couponCode, tableNumber, referralCode } = req.body || {};
+  const { customer, phone, orderType, address, paymentMethod, items, notes, couponCode, tableNumber, referralCode, redeemCoins } = req.body || {};
 
   if (!customer || !phone) return res.status(400).json({ error: "Informe nome e telefone" });
   if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: "Carrinho vazio" });
@@ -153,7 +153,7 @@ router.post("/orders", async (req, res) => {
     const deliveryFee = orderType === "Delivery" ? await getDeliveryFee(address.neighborhood) : 0;
 
     // Cupom: revalidado aqui de novo (nunca confia em valor calculado pelo navegador)
-    let discountAmount = 0;
+    let couponDiscount = 0;
     let appliedCouponCode = null;
     if (couponCode) {
       const cq = await client.query("select * from coupons where code=$1", [String(couponCode).toUpperCase().trim()]);
@@ -162,15 +162,50 @@ router.post("/orders", async (req, res) => {
         && (!coupon.valid_until || new Date(coupon.valid_until) >= new Date())
         && (coupon.max_uses == null || coupon.used_count < coupon.max_uses)
         && subtotal >= Number(coupon.min_order_value || 0)) {
-        discountAmount = coupon.discount_type === "percent"
+        couponDiscount = coupon.discount_type === "percent"
           ? subtotal * (Number(coupon.discount_value) / 100)
           : Number(coupon.discount_value);
-        discountAmount = Math.min(discountAmount, subtotal);
         appliedCouponCode = coupon.code;
         await client.query("update coupons set used_count=used_count+1 where id=$1", [coupon.id]);
       }
     }
 
+    // Resgate de moedas de fidelidade: só é efetivado aqui dentro, na mesma
+    // transação do pedido — se o pedido não for concluído por qualquer motivo,
+    // nada disso é aplicado e o saldo de moedas do cliente permanece intacto.
+    let coinsDiscount = 0;
+    const coinsToRedeem = Math.max(0, parseInt(redeemCoins || 0, 10));
+    if (coinsToRedeem > 0) {
+      const coinRows = await client.query(
+        "select id,amount from loyalty_coins where customer_id=$1 and redeemed=false and expires_at>now() order by created_at for update",
+        [customerId]
+      );
+      const available = coinRows.rows.reduce((s, r) => s + Number(r.amount), 0);
+      if (available < coinsToRedeem) throw new Error(`Saldo de moedas insuficiente (você tem ${available}).`);
+
+      const settingsQ = await client.query("select coin_value_reais from loyalty_settings where id=1");
+      const coinValue = Number(settingsQ.rows[0]?.coin_value_reais ?? 0.01);
+      coinsDiscount = Math.round(coinsToRedeem * coinValue * 100) / 100;
+
+      let remaining = coinsToRedeem;
+      for (const row of coinRows.rows) {
+        if (remaining <= 0) break;
+        const amt = Number(row.amount);
+        if (amt <= remaining) {
+          await client.query("update loyalty_coins set redeemed=true where id=$1", [row.id]);
+          remaining -= amt;
+        } else {
+          await client.query("update loyalty_coins set amount=amount-$1 where id=$2", [remaining, row.id]);
+          await client.query(
+            "insert into loyalty_coins(customer_id,amount,reason,expires_at,redeemed) values($1,$2,'resgate',now(),true)",
+            [customerId, remaining, new Date()]
+          );
+          remaining = 0;
+        }
+      }
+    }
+
+    const discountAmount = Math.min(couponDiscount + coinsDiscount, subtotal);
     const total = subtotal - discountAmount + deliveryFee;
 
     const o = await client.query(
