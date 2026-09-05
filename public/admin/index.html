@@ -65,7 +65,7 @@ async function doLogin(){
 }
 
 const NAV_BY_ROLE = {
-  admin: [['dashboard','Dashboard'],['orders','Pedidos'],['kitchen','Cozinha'],['products','Cardápio'],['stock','Estoque'],['delivery','Entrega'],['coupons','Cupons'],['finance','Financeiro'],['reports','Relatórios'],['users','Usuários'],['settings','Configurações']],
+  admin: [['dashboard','Dashboard'],['orders','Pedidos'],['kitchen','Cozinha'],['products','Cardápio'],['stock','Estoque'],['delivery','Entrega'],['coupons','Cupons'],['loyalty','Fidelidade'],['finance','Financeiro'],['reports','Relatórios'],['users','Usuários'],['settings','Configurações']],
   atendimento: [['orders','Pedidos'],['kitchen','Cozinha']],
   cozinha: [['kitchen','Cozinha']]
 };
@@ -84,7 +84,7 @@ function go(view){
   document.querySelectorAll('#nav button').forEach(b=>b.classList.remove('active'));
   const btn = document.querySelector('#nav-'+view);
   if(btn) btn.classList.add('active');
-  const renderers = { dashboard:renderDashboard, orders:renderOrders, kitchen:renderKitchen, products:renderProducts, stock:renderStock, delivery:renderDelivery, coupons:renderCoupons, finance:renderFinance, reports:renderReports, users:renderUsers, settings:renderSettings };
+  const renderers = { dashboard:renderDashboard, orders:renderOrders, kitchen:renderKitchen, products:renderProducts, stock:renderStock, delivery:renderDelivery, coupons:renderCoupons, loyalty:renderLoyalty, finance:renderFinance, reports:renderReports, users:renderUsers, settings:renderSettings };
   (renderers[view]||renderDashboard)();
 }
 
@@ -641,6 +641,109 @@ async function updateCoupon(id, patch){
 async function deleteCoupon(id){
   if(!confirm('Excluir este cupom?')) return;
   try{ await api('/admin/coupons/'+id,{method:'DELETE'}); go('coupons'); }
+  catch(e){ alert(e.message); }
+}
+
+/* ---------- Fidelidade (moedas, roleta, indicação) ---------- */
+async function renderLoyalty(){
+  const app = document.querySelector('#app');
+  app.innerHTML = '<p class="muted">Carregando...</p>';
+  const [settings, prizes] = await Promise.all([api('/admin/loyalty/settings'), api('/admin/loyalty/prizes')]);
+  app.innerHTML = `
+    <h1>Fidelidade</h1>
+    <div class="grid">
+      <div class="card">
+        <h3>Regras gerais</h3>
+        <label>Validade da moeda (dias)</label>
+        <input id="lsExpiry" type="number" step="1" value="${settings.coin_expiry_days}">
+        <label>A cada quantos pedidos ganha giro bônus</label>
+        <input id="lsBonusEvery" type="number" step="1" value="${settings.bonus_spin_every_orders}">
+        <label>Moedas por check-in diário (base, antes da sequência)</label>
+        <input id="lsCheckin" type="number" step="1" value="${settings.daily_checkin_coins}">
+        <label>Moedas por indicação de amigo</label>
+        <input id="lsReferral" type="number" step="1" value="${settings.referral_coin_amount}">
+        <label>Valor de cada moeda em reais</label>
+        <input id="lsCoinValue" type="number" step="0.01" value="${settings.coin_value_reais}">
+        <button class="btn block" onclick="saveLoyaltySettings()">Salvar regras</button>
+        <p class="muted" style="margin-top:10px">O giro do 1º pedido é automático e sempre acontece — não precisa configurar.</p>
+      </div>
+      <div class="card">
+        <h3>Novo prêmio da roleta</h3>
+        <label>Nome (aparece na roleta)</label>
+        <input id="lpLabel" placeholder="ex: 10% de desconto">
+        <label>Tipo</label>
+        <select id="lpType">
+          <option value="">Sem desconto (ex: "Não foi dessa vez")</option>
+          <option value="percent">Percentual (%)</option>
+          <option value="fixed">Valor fixo (R$)</option>
+        </select>
+        <label>Valor do desconto</label>
+        <input id="lpValue" type="number" step="0.01" placeholder="ex: 10">
+        <label>Peso (chance relativa — quanto maior, mais sorteado)</label>
+        <input id="lpWeight" type="number" step="1" value="1">
+        <label>Ordem de exibição na roleta</label>
+        <input id="lpSort" type="number" step="1" value="${prizes.length+1}">
+        <button class="btn block" onclick="createPrize()">Adicionar prêmio</button>
+      </div>
+    </div>
+    <table style="margin-top:16px">
+      <thead><tr><th>Ordem</th><th>Nome</th><th>Tipo</th><th>Valor</th><th>Peso</th><th>Ativo</th><th></th></tr></thead>
+      <tbody>
+        ${prizes.map(p => `
+          <tr>
+            <td><input value="${p.sort_order}" type="number" step="1" style="margin:0;width:60px" onchange="updatePrize(${p.id},{sortOrder:Number(this.value)})"></td>
+            <td><input value="${p.label}" style="margin:0;width:180px" onchange="updatePrize(${p.id},{label:this.value})"></td>
+            <td>
+              <select style="margin:0" onchange="updatePrize(${p.id},{discountType:this.value||null})">
+                <option value="" ${!p.discount_type?'selected':''}>Sem desconto</option>
+                <option value="percent" ${p.discount_type==='percent'?'selected':''}>Percentual (%)</option>
+                <option value="fixed" ${p.discount_type==='fixed'?'selected':''}>Valor fixo (R$)</option>
+              </select>
+            </td>
+            <td><input value="${p.discount_value||''}" type="number" step="0.01" style="margin:0;width:80px" onchange="updatePrize(${p.id},{discountValue:Number(this.value)})"></td>
+            <td><input value="${p.weight}" type="number" step="1" style="margin:0;width:60px" onchange="updatePrize(${p.id},{weight:Number(this.value)})"></td>
+            <td><input type="checkbox" ${p.active?'checked':''} style="width:auto" onchange="updatePrize(${p.id},{active:this.checked})"></td>
+            <td><button class="btn danger" style="padding:6px 10px" onclick="deletePrize(${p.id})">✕</button></td>
+          </tr>
+        `).join('') || '<tr><td colspan="7" class="muted">Nenhum prêmio cadastrado ainda</td></tr>'}
+      </tbody>
+    </table>
+    <p class="muted" style="margin-top:10px">A soma dos pesos define as chances: um prêmio com peso 4 é o dobro de provável de um com peso 2. Prêmios inativos somem da roleta sem apagar o histórico de quem já ganhou.</p>
+  `;
+}
+async function saveLoyaltySettings(){
+  try{
+    await api('/admin/loyalty/settings',{method:'PATCH',body:JSON.stringify({
+      coinExpiryDays: Number(document.querySelector('#lsExpiry').value),
+      bonusSpinEveryOrders: Number(document.querySelector('#lsBonusEvery').value),
+      dailyCheckinCoins: Number(document.querySelector('#lsCheckin').value),
+      referralCoinAmount: Number(document.querySelector('#lsReferral').value),
+      coinValueReais: Number(document.querySelector('#lsCoinValue').value)
+    })});
+    go('loyalty');
+  }catch(e){ alert(e.message); }
+}
+async function createPrize(){
+  const label = document.querySelector('#lpLabel').value.trim();
+  if(!label) return alert('Informe o nome do prêmio');
+  try{
+    await api('/admin/loyalty/prizes',{method:'POST',body:JSON.stringify({
+      label,
+      discountType: document.querySelector('#lpType').value || null,
+      discountValue: document.querySelector('#lpValue').value ? Number(document.querySelector('#lpValue').value) : null,
+      weight: Number(document.querySelector('#lpWeight').value||1),
+      sortOrder: Number(document.querySelector('#lpSort').value||99)
+    })});
+    go('loyalty');
+  }catch(e){ alert(e.message); }
+}
+async function updatePrize(id, patch){
+  try{ await api('/admin/loyalty/prizes/'+id,{method:'PATCH',body:JSON.stringify(patch)}); }
+  catch(e){ alert(e.message); }
+}
+async function deletePrize(id){
+  if(!confirm('Excluir este prêmio? Prefira desativar se ele já foi sorteado alguma vez.')) return;
+  try{ await api('/admin/loyalty/prizes/'+id,{method:'DELETE'}); go('loyalty'); }
   catch(e){ alert(e.message); }
 }
 
