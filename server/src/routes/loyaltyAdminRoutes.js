@@ -11,7 +11,12 @@ router.get("/settings", async (_, res) => {
 
 router.patch("/settings", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
-  const { coinExpiryDays, bonusSpinEveryOrders, dailyCheckinCoins, referralCoinAmount, coinValueReais } = req.body || {};
+  const b = req.body || {};
+  const coinExpiryDays = b.coinExpiryDays ?? null;
+  const bonusSpinEveryOrders = b.bonusSpinEveryOrders ?? null;
+  const dailyCheckinCoins = b.dailyCheckinCoins ?? null;
+  const referralCoinAmount = b.referralCoinAmount ?? null;
+  const coinValueReais = b.coinValueReais ?? null;
   const { rows } = await pool.query(
     `update loyalty_settings set
        coin_expiry_days=coalesce($1,coin_expiry_days),
@@ -48,20 +53,33 @@ router.post("/prizes", async (req, res) => {
 
 router.patch("/prizes/:id", async (req, res) => {
   if (!pool) return res.status(503).json({ error: "Banco de dados não configurado" });
-  const { label, discountType, discountValue, weight, active, sortOrder } = req.body || {};
-  if (discountType && !["percent", "fixed"].includes(discountType)) {
+  const b = req.body || {};
+  if (b.discountType && !["percent", "fixed"].includes(b.discountType)) {
     return res.status(400).json({ error: "Tipo de desconto inválido" });
   }
+
+  // Monta o UPDATE só com os campos que realmente vieram na requisição —
+  // assim dá pra editar um campo de cada vez (como a tabela do admin faz)
+  // e também dá pra "limpar" um campo de propósito (ex: tipo = null).
+  const fields = [];
+  const values = [];
+  let i = 1;
+  const set = (column, key) => {
+    if (key in b) { fields.push(`${column}=$${i++}`); values.push(b[key]); }
+  };
+  set("label", "label");
+  set("discount_type", "discountType");
+  set("discount_value", "discountValue");
+  set("weight", "weight");
+  set("active", "active");
+  set("sort_order", "sortOrder");
+
+  if (!fields.length) return res.status(400).json({ error: "Nada para atualizar" });
+  values.push(req.params.id);
+
   const { rows } = await pool.query(
-    `update spin_prizes set
-       label=coalesce($1,label),
-       discount_type=coalesce($2,discount_type),
-       discount_value=coalesce($3,discount_value),
-       weight=coalesce($4,weight),
-       active=coalesce($5,active),
-       sort_order=coalesce($6,sort_order)
-     where id=$7 returning *`,
-    [label, discountType, discountValue, weight, active, sortOrder, req.params.id]
+    `update spin_prizes set ${fields.join(", ")} where id=$${i} returning *`,
+    values
   );
   res.json(rows[0] || {});
 });
