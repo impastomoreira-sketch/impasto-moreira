@@ -60,6 +60,7 @@ let orderType = "Delivery";
 let deliveryFee = 0;
 let lastOrder = null;
 let appliedCoupon = null; // { code, discountAmount }
+let pendingCoinRedeem = null; // { coins, discount } — reservado até o pedido ser confirmado
 const urlParams = new URLSearchParams(window.location.search);
 const tableFromUrl = urlParams.get('mesa');
 
@@ -130,7 +131,7 @@ function removeFromCart(id){ cart = cart.filter(i=>i.productId!==id); saveCart()
 function cartSubtotal(){ return cart.reduce((s,i)=>s+i.price*i.quantity,0); }
 
 function openCart(){
-  step = cart.length ? "carrinho" : "carrinho";
+  if(step !== 'entrega' && step !== 'confirmacao') step = 'carrinho';
   renderCart();
   document.querySelector('#overlay').classList.add('open');
   document.querySelector('#drawer').classList.add('open');
@@ -190,7 +191,7 @@ async function renderCart(){
       </div>
       <p class="muted" id="couponInfo">${appliedCoupon ? `Cupom ${appliedCoupon.code} aplicado: -${money(appliedCoupon.discountAmount)}` : ''}</p>
       <div class="cart-total"><span>Subtotal</span><span>${money(cartSubtotal())}</span></div>
-      <div id="discountLine">${appliedCoupon ? `<div class="cart-total" style="color:#8fe0a0"><span>Desconto</span><span>-${money(appliedCoupon.discountAmount)}</span></div>` : ''}</div>
+      <div id="discountLine">${appliedCoupon ? `<div class="cart-total" style="color:#8fe0a0"><span>Cupom ${appliedCoupon.code}</span><span>-${money(appliedCoupon.discountAmount)}</span></div>` : ''}${pendingCoinRedeem ? `<div class="cart-total" style="color:#8fe0a0"><span>Moedas (${pendingCoinRedeem.coins})</span><span>-${money(pendingCoinRedeem.discount)}</span></div>` : ''}</div>
       <div class="cart-total" id="feeLine"><span>Taxa de entrega</span><span>${money(deliveryFee)}</span></div>
       <div class="cart-total" style="border-top:1px solid var(--border);padding-top:10px"><span>Total</span><span id="totalLine">${money(cartTotal())}</span></div>
       <button class="btn block" onclick="submitOrder()">Confirmar pedido</button>
@@ -200,11 +201,17 @@ async function renderCart(){
     if(tableFromUrl && orderType!=='Mesa') setOrderType('Mesa');
     else if(orderType==='Mesa'){ document.querySelector('#tabTable').classList.add('active'); document.querySelector('#tabDelivery').classList.remove('active'); document.querySelector('#addressFields').style.display='none'; document.querySelector('#tableField').style.display='block'; }
 
-    // Se o cliente ganhou um cupom (roleta ou resgate de moedas) e ainda não usou,
-    // já preenche e aplica sozinho assim que ele chega no checkout.
+    // Se o cliente ganhou um cupom (roleta) e ainda não usou, já preenche e
+    // aplica sozinho assim que ele chega no checkout.
     if(localStorage.im_pending_coupon){
       document.querySelector('#fCoupon').value = localStorage.im_pending_coupon;
       localStorage.removeItem('im_pending_coupon');
+      applyCoupon();
+    } else if(!appliedCoupon && localStorage.im_saved_coupon_code){
+      // Restaura um cupom que já estava aplicado antes do cliente sair sem
+      // finalizar (fechar o app, trocar de aba, etc.) — sem isso, o desconto
+      // "sumia" mesmo sem o pedido ter sido concluído.
+      document.querySelector('#fCoupon').value = localStorage.im_saved_coupon_code;
       applyCoupon();
     }
     renderCoinUseBox();
@@ -230,7 +237,10 @@ function setOrderType(type){
   else lookupFee();
 }
 
-function cartTotal(){ return Math.max(0, cartSubtotal() - (appliedCoupon?appliedCoupon.discountAmount:0) + deliveryFee); }
+function cartTotal(){
+  const discounts = (appliedCoupon?appliedCoupon.discountAmount:0) + (pendingCoinRedeem?pendingCoinRedeem.discount:0);
+  return Math.max(0, cartSubtotal() - discounts + deliveryFee);
+}
 
 async function applyCoupon(){
   const code = document.querySelector('#fCoupon').value.trim();
@@ -238,8 +248,9 @@ async function applyCoupon(){
   const r = await fetch('/api/public/coupons/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,subtotal:cartSubtotal()})});
   const x = await r.json();
   const info = document.querySelector('#couponInfo');
-  if(!r.ok){ appliedCoupon = null; info.textContent = '❌ '+(x.error||'Cupom inválido'); updateTotals(); return; }
+  if(!r.ok){ appliedCoupon = null; localStorage.removeItem('im_saved_coupon_code'); info.textContent = '❌ '+(x.error||'Cupom inválido'); updateTotals(); return; }
   appliedCoupon = { code: x.code, discountAmount: x.discountAmount };
+  localStorage.im_saved_coupon_code = x.code; // sobrevive a fechar/reabrir o app antes de finalizar
   info.textContent = `✅ Cupom ${x.code} aplicado: -${money(x.discountAmount)}`;
   updateTotals();
 }
@@ -247,32 +258,40 @@ async function applyCoupon(){
 async function renderCoinUseBox(){
   const box = document.querySelector('#coinUseBox');
   if(!box) return;
+  if(pendingCoinRedeem){
+    box.innerHTML = `
+      <div style="margin:0 0 16px;padding:12px 14px;background:var(--bg-elevated);border-radius:10px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <span>🪙 ${pendingCoinRedeem.coins} moeda(s) aplicada(s): -${money(pendingCoinRedeem.discount)}</span>
+        <button class="btn secondary" style="white-space:nowrap;padding:8px 14px" onclick="removeCoinRedeem()">Remover</button>
+      </div>
+    `;
+    return;
+  }
   const phone = localStorage.im_phone;
-  if(!phone || appliedCoupon){ box.innerHTML = ''; return; }
+  if(!phone){ box.innerHTML = ''; return; }
   try{
     const s = await fetch('/api/public/loyalty/status?phone='+encodeURIComponent(phone)).then(r=>r.json());
     if(!s.coins || s.coins < 1){ box.innerHTML = ''; return; }
     box.innerHTML = `
       <div style="margin:0 0 16px;padding:12px 14px;background:var(--bg-elevated);border-radius:10px;display:flex;justify-content:space-between;align-items:center;gap:10px">
         <span>🪙 Você tem ${s.coins} moeda(s) = ${money(s.coins*s.coinValue)}</span>
-        <button class="btn secondary" style="white-space:nowrap;padding:8px 14px" onclick="useCoinsAtCheckout(${s.coins},${s.coinValue})">Usar agora</button>
+        <button class="btn secondary" style="white-space:nowrap;padding:8px 14px" onclick="stageCoinsAtCheckout(${s.coins},${s.coinValue})">Usar agora</button>
       </div>
     `;
   }catch{ box.innerHTML = ''; }
 }
 
-async function useCoinsAtCheckout(maxCoins, coinValue){
-  const phone = localStorage.im_phone;
-  try{
-    const r = await fetch('/api/public/loyalty/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,coins:maxCoins})});
-    const x = await r.json();
-    if(!r.ok) return alert(x.error || 'Não foi possível usar as moedas agora.');
-    appliedCoupon = { code: x.couponCode, discountAmount: x.discountValue };
-    document.querySelector('#fCoupon').value = x.couponCode;
-    document.querySelector('#couponInfo').textContent = `✅ ${maxCoins} moeda(s) trocadas: -${money(x.discountValue)}`;
-    document.querySelector('#coinUseBox').innerHTML = '';
-    updateTotals();
-  }catch{ alert('Não foi possível usar as moedas agora.'); }
+// Só reserva o desconto na tela — as moedas continuam intactas no seu saldo
+// até o pedido ser realmente confirmado. Se você sair sem finalizar, nada é gasto.
+function stageCoinsAtCheckout(maxCoins, coinValue){
+  pendingCoinRedeem = { coins: maxCoins, discount: Math.round(maxCoins*coinValue*100)/100 };
+  renderCoinUseBox();
+  updateTotals();
+}
+function removeCoinRedeem(){
+  pendingCoinRedeem = null;
+  renderCoinUseBox();
+  updateTotals();
 }
 
 async function lookupFee(){
@@ -286,7 +305,9 @@ function updateTotals(){
   document.querySelector('#feeLine').innerHTML = `<span>Taxa de entrega</span><span>${money(deliveryFee)}</span>`;
   document.querySelector('#totalLine').textContent = money(cartTotal());
   const dl = document.querySelector('#discountLine');
-  if(dl) dl.innerHTML = appliedCoupon ? `<div class="cart-total" style="color:#8fe0a0"><span>Desconto</span><span>-${money(appliedCoupon.discountAmount)}</span></div>` : '';
+  if(dl) dl.innerHTML =
+    (appliedCoupon ? `<div class="cart-total" style="color:#8fe0a0"><span>Cupom ${appliedCoupon.code}</span><span>-${money(appliedCoupon.discountAmount)}</span></div>` : '') +
+    (pendingCoinRedeem ? `<div class="cart-total" style="color:#8fe0a0"><span>Moedas (${pendingCoinRedeem.coins})</span><span>-${money(pendingCoinRedeem.discount)}</span></div>` : '');
 }
 
 async function submitOrder(viaWhatsApp){
@@ -307,6 +328,7 @@ async function submitOrder(viaWhatsApp){
   const payload = {
     customer, phone, orderType, paymentMethod, notes, address, tableNumber,
     couponCode: appliedCoupon ? appliedCoupon.code : null,
+    redeemCoins: pendingCoinRedeem ? pendingCoinRedeem.coins : 0,
     referralCode: localStorage.im_referral || null,
     items: cart.map(i=>({productId:i.productId,quantity:i.quantity}))
   };
@@ -316,6 +338,8 @@ async function submitOrder(viaWhatsApp){
   lastOrder = x;
   saveMyOrder(x.orderId);
   appliedCoupon = null;
+  pendingCoinRedeem = null;
+  localStorage.removeItem('im_saved_coupon_code');
   localStorage.im_phone = phone;
   localStorage.im_name = customer;
   localStorage.removeItem('im_referral');
@@ -517,26 +541,18 @@ function copyReferralLink(link){
   navigator.clipboard?.writeText(link).then(()=>alert('Link copiado!')).catch(()=>{});
 }
 
-async function doRedeem(maxCoins, coinValue){
-  const phone = localStorage.im_phone;
+function doRedeem(maxCoins, coinValue){
   const qty = parseInt(document.querySelector('#redeemQty').value, 10);
   if(!qty || qty < 1) return alert('Informe quantas moedas quer trocar.');
   if(qty > maxCoins) return alert('Você não tem moedas suficientes.');
-  try{
-    const r = await fetch('/api/public/loyalty/redeem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,coins:qty})});
-    const x = await r.json();
-    if(!r.ok) return alert(x.error || 'Não foi possível trocar agora.');
-    refreshLoyaltyBadge();
-    document.querySelector('#loyaltyDrawer').innerHTML = `
-      <h2 style="color:var(--gold-light)">Fidelidade</h2>
-      <div style="margin:16px 0;padding:16px;background:var(--bg-elevated);border-radius:10px;text-align:center">
-        <p style="margin:0 0 6px;font-size:1.1rem;color:var(--gold-light);font-weight:700">🎉 Cupom gerado!</p>
-        <p class="muted" style="margin:0 0 14px">${qty} moeda(s) trocadas por ${money(x.discountValue)} de desconto.</p>
-        <button class="btn block" onclick="useCouponNow('${x.couponCode}')">Usar agora no meu pedido</button>
-        <button class="btn secondary block" style="margin-top:8px" onclick="closeLoyalty()">Fechar</button>
-      </div>
-    `;
-  }catch{ alert('Não foi possível trocar agora.'); }
+  if(!cart.length){
+    closeLoyalty();
+    return alert('Adicione itens ao carrinho antes de usar suas moedas. Suas moedas continuam guardadas.');
+  }
+  stageCoinsAtCheckout(qty, coinValue);
+  closeLoyalty();
+  step = 'entrega';
+  openCart();
 }
 
 async function doCheckin(){
